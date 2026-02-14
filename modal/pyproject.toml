@@ -1,0 +1,12 @@
+[project]
+name = "treehacks-vector-search"
+version = "0.1.0"
+description = "TreeHacks 2026 - Vector search with Elasticsearch and Jina embeddings"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "elasticsearch>=8.17",
+    "fastapi[standard]",
+    "modal",
+    "requests>=2.31",
+]

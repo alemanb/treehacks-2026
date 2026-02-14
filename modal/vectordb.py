@@ -1,0 +1,74 @@
+import os
+
+from elasticsearch import Elasticsearch
+from elasticsearch.helpers import bulk
+
+from config import ES_ENDPOINT, ES_INDEX, JINA_DIMENSIONS
+
+
+def get_client() -> Elasticsearch:
+    return Elasticsearch(ES_ENDPOINT, api_key=os.environ["ES_API_KEY"])
+
+
+def ensure_index(client: Elasticsearch) -> None:
+    if not client.indices.exists(index=ES_INDEX):
+        client.indices.create(
+            index=ES_INDEX,
+            mappings={
+                "properties": {
+                    "content": {"type": "text"},
+                    "embedding": {
+                        "type": "dense_vector",
+                        "dims": JINA_DIMENSIONS,
+                        "index": True,
+                        "similarity": "cosine",
+                    },
+                    "metadata": {
+                        "properties": {
+                            "object": {"type": "keyword"},
+                            "color": {"type": "keyword"},
+                            "timestamp": {"type": "date"},
+                            "motion_vector": {"type": "float"},
+                            "device_id": {"type": "keyword"},
+                        }
+                    },
+                }
+            },
+        )
+
+
+def index_document(
+    client: Elasticsearch, content: str, metadata: dict, embedding: list[float]
+) -> str:
+    """Index a single observation. Returns the document ID."""
+    result = client.index(
+        index=ES_INDEX,
+        document={
+            "content": content,
+            "metadata": metadata,
+            "embedding": embedding,
+        },
+    )
+    return result["_id"]
+
+
+def bulk_index_documents(
+    client: Elasticsearch, documents: list[dict]
+) -> tuple[int, int]:
+    """Bulk index observations. Each dict must have content, metadata, embedding.
+    Returns (success_count, error_count).
+    """
+    actions = [
+        {
+            "_index": ES_INDEX,
+            "_source": {
+                "content": doc["content"],
+                "metadata": doc["metadata"],
+                "embedding": doc["embedding"],
+            },
+        }
+        for doc in documents
+    ]
+    success, errors = bulk(client, actions, raise_on_error=False)
+    error_count = len(errors) if isinstance(errors, list) else errors
+    return success, error_count
