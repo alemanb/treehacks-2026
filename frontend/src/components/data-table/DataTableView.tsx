@@ -1,3 +1,4 @@
+import { useState } from "react"
 import {
   flexRender,
   getCoreRowModel,
@@ -32,6 +33,8 @@ export function DataTableView({
   onPageSizeChange,
   isLoading = false,
 }: DataTableViewProps) {
+  const [pageInput, setPageInput] = useState<string>("")
+
   const table = useReactTable({
     data: results,
     columns,
@@ -39,6 +42,16 @@ export function DataTableView({
     manualPagination: true,  // Server-side pagination
     pageCount: pagination?.total_pages ?? 0,
   })
+
+  const handlePageSubmit = () => {
+    if (!pagination || !pageInput) return
+
+    const page = Number(pageInput)
+    if (page >= 1 && page <= pagination.total_pages) {
+      onPageChange(page)
+    }
+    setPageInput("") // Clear input after submit
+  }
 
   return (
     <div className="space-y-4">
@@ -123,15 +136,17 @@ export function DataTableView({
                   type="number"
                   min={1}
                   max={pagination.total_pages}
-                  value={pagination.page}
-                  onChange={(e) => {
-                    const page = Number(e.target.value)
-                    if (page >= 1 && page <= pagination.total_pages) {
-                      onPageChange(page)
+                  value={pageInput || pagination.page}
+                  onChange={(e) => setPageInput(e.target.value)}
+                  onFocus={(e) => e.target.select()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      handlePageSubmit()
                     }
                   }}
+                  onBlur={handlePageSubmit}
                   disabled={isLoading}
-                  className="w-16 h-8 rounded-md border border-input bg-background px-2 text-sm text-center ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="w-16 h-8 rounded-md border border-input bg-background px-2 text-sm text-center ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
                 <span className="text-sm text-muted-foreground">of {pagination.total_pages}</span>
               </div>

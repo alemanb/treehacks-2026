@@ -1,5 +1,7 @@
 import { format } from "date-fns"
 import type { SearchResult } from "@/types/search"
+import { LikelihoodBadge } from "@/components/data-table/LikelihoodBadge"
+import { scoreToPercentage } from "@/lib/likelihood"
 
 interface DateDetailCardProps {
   date: string
@@ -15,12 +17,15 @@ export function DateDetailCard({ date, results }: DateDetailCardProps) {
       <ul className="space-y-2">
         {results.map((result) => (
           <li key={result.id} className="text-sm space-y-0.5">
-            <p className="text-muted-foreground">
-              {format(
-                new Date(result.metadata.timestamp),
-                "MM-dd-yy hh:mm a",
-              )}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-muted-foreground">
+                {format(
+                  new Date(result.metadata.timestamp),
+                  "MM-dd-yy hh:mm a",
+                )}
+              </p>
+              <LikelihoodBadge percentage={scoreToPercentage(result.score)} />
+            </div>
             <p>{result.content}</p>
             <a href="#" className="text-blue-500 underline text-xs">
               View Details

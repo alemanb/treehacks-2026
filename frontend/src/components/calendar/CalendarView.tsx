@@ -1,7 +1,6 @@
 import * as React from "react"
 import { createContext, useContext, useMemo, useState } from "react"
 import { format } from "date-fns"
-import { Star } from "lucide-react"
 import type { DayButton } from "react-day-picker"
 
 import { Calendar, CalendarDayButton } from "@/components/ui/calendar"
@@ -116,13 +115,13 @@ function HighlightedDayButton({
       className={cn(
         styles.calendarBg,
         styles.calendarText,
-        "hover:opacity-80 rounded-md",
+        "rounded-md transition-colors",
+        isMostLikely && "animate-pulse",
         className,
       )}
       {...rest}
     >
       {children}
-      {isMostLikely && <Star className="size-2.5 fill-current" />}
     </CalendarDayButton>
   )
 }

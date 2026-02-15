@@ -4,7 +4,7 @@ import type { SearchResponse, SearchResult, PaginationMetadata } from "@/types/s
 const BACKEND_URL = "https://alemanb--treehacks-vector-search-web.modal.run"
 
 interface UseSearchReturn {
-  search: (query: string, page?: number) => void
+  search: (query: string, page?: number, customPageSize?: number) => void
   results: SearchResult[]
   pagination: PaginationMetadata | null
   isLoading: boolean
@@ -26,7 +26,10 @@ export function useSearch(onComplete?: () => void): UseSearchReturn {
   const abortControllerRef = useRef<AbortController | null>(null)
 
   const search = useCallback(
-    async (query: string, page: number = 1) => {
+    async (query: string, page: number = 1, customPageSize?: number) => {
+      // Use customPageSize if provided, otherwise use current pageSize state
+      const effectivePageSize = customPageSize ?? pageSize
+
       setIsLoading(true)
       setError(null)
       setCurrentQuery(query)
@@ -46,7 +49,7 @@ export function useSearch(onComplete?: () => void): UseSearchReturn {
           body: JSON.stringify({
             query,
             page,
-            page_size: pageSize,
+            page_size: effectivePageSize,
           }),
           signal: abortControllerRef.current.signal,
         })
@@ -60,12 +63,7 @@ export function useSearch(onComplete?: () => void): UseSearchReturn {
 
         const data: SearchResponse = await response.json()
 
-        // Filter to only show observations with motion data
-        const filteredResults = data.results.filter(
-          (r) => r.metadata.motion_vector !== null
-        )
-
-        setResults(filteredResults)
+        setResults(data.results)
         setPagination(data.pagination)
         onComplete?.()
       } catch (err) {
@@ -78,7 +76,7 @@ export function useSearch(onComplete?: () => void): UseSearchReturn {
         abortControllerRef.current = null
       }
     },
-    [onComplete],
+    [onComplete, pageSize],
   )
 
   const setPage = useCallback(
@@ -93,10 +91,10 @@ export function useSearch(onComplete?: () => void): UseSearchReturn {
   const handleSetPageSize = useCallback(
     (size: number) => {
       setPageSize(size)
-      // When changing page size, reset to page 1
+      // When changing page size, reset to page 1 and pass new size explicitly
       if (currentQuery) {
         setCurrentPage(1)
-        search(currentQuery, 1)
+        search(currentQuery, 1, size)  // Pass the new size explicitly
       }
     },
     [currentQuery, search]
