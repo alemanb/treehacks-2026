@@ -121,10 +121,24 @@ def _save_change_frame(
     frame_bgr,
     frames_dir: str,
     frame_uuid: str,
+    bbox_xywh: List[float] | None = None,
 ) -> None:
     try:
+        frame_to_save = frame_bgr
+        if frame_bgr is not None and isinstance(bbox_xywh, list) and len(bbox_xywh) == 4:
+            h, w = frame_bgr.shape[:2]
+            x, y, bw, bh = [float(v) for v in bbox_xywh]
+            if bw > 1.0 and bh > 1.0:
+                x1 = max(0, min(w - 1, int(np.floor(x))))
+                y1 = max(0, min(h - 1, int(np.floor(y))))
+                x2 = max(0, min(w - 1, int(np.ceil(x + bw))))
+                y2 = max(0, min(h - 1, int(np.ceil(y + bh))))
+                if x2 > x1 and y2 > y1:
+                    frame_to_save = frame_bgr.copy()
+                    cv2.rectangle(frame_to_save, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
         filename = f"{frame_uuid}.jpg"
-        cv2.imwrite(os.path.join(frames_dir, filename), frame_bgr)
+        cv2.imwrite(os.path.join(frames_dir, filename), frame_to_save)
     except Exception as exc:
         print(f"WARNING: failed to save change frame: {exc}")
 
@@ -369,11 +383,11 @@ def _enqueue_vlm_task(state: RuntimeState, task: Dict[str, Any]) -> None:
     object_ref = int(task.get("object_id", task.get("new_id", -1)))
     try:
         state.vlm_tasks.put_nowait(task)
-        print(
-            "[PRE-VLM][queued] "
-            f"kind={kind} frame={frame_index} object={object_ref} "
-            f"queue_size={state.vlm_tasks.qsize()}"
-        )
+        # print(
+        #     "[PRE-VLM][queued] "
+        #     f"kind={kind} frame={frame_index} object={object_ref} "
+        #     f"queue_size={state.vlm_tasks.qsize()}"
+        # )
         return
     except queue.Full:
         print(
@@ -390,18 +404,18 @@ def _enqueue_vlm_task(state: RuntimeState, task: Dict[str, Any]) -> None:
 
     try:
         state.vlm_tasks.put_nowait(task)
-        print(
-            "[PRE-VLM][queued_after_drop] "
-            f"kind={kind} frame={frame_index} object={object_ref} "
-            f"queue_size={state.vlm_tasks.qsize()}"
-        )
+        # print(
+        #     "[PRE-VLM][queued_after_drop] "
+        #     f"kind={kind} frame={frame_index} object={object_ref} "
+        #     f"queue_size={state.vlm_tasks.qsize()}"
+        # )
     except queue.Full:
         state.vlm_dropped_tasks += 1
-        print(
-            "[PRE-VLM][dropped] "
-            f"kind={kind} frame={frame_index} object={object_ref} "
-            f"total_dropped={state.vlm_dropped_tasks}"
-        )
+        # print(
+        #     "[PRE-VLM][dropped] "
+        #     f"kind={kind} frame={frame_index} object={object_ref} "
+        #     f"total_dropped={state.vlm_dropped_tasks}"
+        # )
 
 
 def _run_vlm_workers(state: RuntimeState, num_workers: int = 2) -> None:
@@ -425,10 +439,10 @@ def _run_vlm_workers(state: RuntimeState, num_workers: int = 2) -> None:
                 current_bgr = task.get("current_bgr")
                 vlm_before = _crop_frame_with_context(before_bgr, bbox_xywh)
                 vlm_current = _crop_frame_with_context(current_bgr, bbox_xywh)
-                print(
-                    "[PRE-VLM][start] "
-                    f"kind={kind} frame={frame_index} object={object_ref}"
-                )
+                # print(
+                #     "[PRE-VLM][start] "
+                #     f"kind={kind} frame={frame_index} object={object_ref}"
+                # )
                 if kind == "move":
                     response = state.vlm_client.assess_move(
                         label=str(task["label"]),
@@ -456,11 +470,11 @@ def _run_vlm_workers(state: RuntimeState, num_workers: int = 2) -> None:
             latency_ms = int((time.time() - start_ts) * 1000)
             error_text = str(response.get("error", "")).strip()
             error_suffix = f" error={error_text}" if error_text else ""
-            print(
-                "[POST-VLM][done] "
-                f"kind={kind} frame={frame_index} object={object_ref} "
-                f"latency_ms={latency_ms} keys={sorted(response.keys())}{error_suffix}"
-            )
+            # print(
+            #     "[POST-VLM][done] "
+            #     f"kind={kind} frame={frame_index} object={object_ref} "
+            #     f"latency_ms={latency_ms} keys={sorted(response.keys())}{error_suffix}"
+            # )
             state.vlm_results.put({"task": task, "response": response})
 
     for idx in range(max(1, int(num_workers))):
@@ -860,17 +874,19 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
         common_ids = sorted(current_ids & prev_ids)
         missing_ids = sorted(prev_ids - current_ids)
         if new_ids or common_ids or missing_ids:
-            print(
-                "[POST-YOLO][tracker] "
-                f"frame={frame_index} detections={len(detections)} "
-                f"active={len(current_ids)} new={new_ids} common={common_ids} "
-                f"missing={missing_ids}"
-            )
+            # print(
+            #     "[POST-YOLO][tracker] "
+            #     f"frame={frame_index} detections={len(detections)} "
+            #     f"active={len(current_ids)} new={new_ids} common={common_ids} "
+            #     f"missing={missing_ids}"
+            # )
+            pass
         elif frame_index % 30 == 0:
-            print(
-                "[POST-YOLO][heartbeat] "
-                f"frame={frame_index} detections={len(detections)} active={len(current_ids)}"
-            )
+            # print(
+            #     "[POST-YOLO][heartbeat] "
+            #     f"frame={frame_index} detections={len(detections)} active={len(current_ids)}"
+            # )
+            pass
 
         for object_id in new_ids:
             obj = current_objects[object_id]
@@ -947,6 +963,7 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
                     frame_bgr=frame_bgr,
                     frames_dir=state.frames_dir,
                     frame_uuid=frame_uuid,
+                    bbox_xywh=bbox_xywh,
                 )
 
         for object_id in common_ids:
@@ -996,6 +1013,7 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
                         frame_bgr=frame_bgr,
                         frames_dir=state.frames_dir,
                         frame_uuid=frame_uuid,
+                        bbox_xywh=curr_bbox,
                     )
                 _append_bbox_history(
                     state=state,
@@ -1037,6 +1055,7 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
                     frame_bgr=frame_bgr,
                     frames_dir=state.frames_dir,
                     frame_uuid=frame_uuid,
+                    bbox_xywh=prev_bbox,
                 )
             state.archived_objects[object_id] = dict(filtered_obj)
             state.filtered_objects.pop(object_id, None)
@@ -1414,20 +1433,20 @@ def main() -> None:
     probe_pad = pre_osd_caps.get_static_pad("src")
     probe_pad.add_probe(Gst.PadProbeType.BUFFER, pgie_src_pad_buffer_probe, state)
 
-    print("=" * 60)
-    print("DeepStream YOLO webcam tracker running")
-    print(f"Webcam device : /dev/video{args.source}")
-    print(f"Ingest URL    : {state.ingest_url}")
-    print(
-        f"Frame links   : {state.frame_link_host}:{state.frame_link_port}/<frame_uuid>"
-    )
-    print(f"Video file    : {video_path}")
-    print(f"Event frames  : {frames_dir}")
-    print(f"VLM endpoint  : {args.vlm_base_url}")
-    print(f"VLM model     : {args.vlm_model}")
-    print("VLM mode      : async (buffered)")
-    print("Press Ctrl+C to stop")
-    print("=" * 60)
+    # print("=" * 60)
+    # print("DeepStream YOLO webcam tracker running")
+    # print(f"Webcam device : /dev/video{args.source}")
+    # print(f"Ingest URL    : {state.ingest_url}")
+    # print(
+    #     f"Frame links   : {state.frame_link_host}:{state.frame_link_port}/<frame_uuid>"
+    # )
+    # print(f"Video file    : {video_path}")
+    # print(f"Event frames  : {frames_dir}")
+    # print(f"VLM endpoint  : {args.vlm_base_url}")
+    # print(f"VLM model     : {args.vlm_model}")
+    # print("VLM mode      : async (buffered)")
+    # print("Press Ctrl+C to stop")
+    # print("=" * 60)
 
     loop = GLib.MainLoop()
     bus = pipeline.get_bus()
@@ -1438,11 +1457,11 @@ def main() -> None:
         nonlocal eos_received
         if message.type == Gst.MessageType.ERROR:
             err, debug = message.parse_error()
-            print(f"[ERROR] {err} | {debug}")
+            # print(f"[ERROR] {err} | {debug}")
             loop.quit()
         elif message.type == Gst.MessageType.EOS:
             eos_received = True
-            print("[*] EOS received")
+            # print("[*] EOS received")
             loop.quit()
 
     bus.connect("message", on_message)
@@ -1451,8 +1470,8 @@ def main() -> None:
     try:
         loop.run()
     except KeyboardInterrupt:
-        print("\n[*] Interrupted by user")
-        print("[*] Sending EOS to finalize recording...")
+        # print("\n[*] Interrupted by user")
+        # print("[*] Sending EOS to finalize recording...")
         if not pipeline.send_event(Gst.Event.new_eos()):
             print("WARNING: failed to send EOS; recording may be incomplete")
         else:
@@ -1463,10 +1482,10 @@ def main() -> None:
                 print("WARNING: timeout waiting for EOS; forcing pipeline shutdown")
             elif msg.type == Gst.MessageType.ERROR:
                 err, debug = msg.parse_error()
-                print(f"[ERROR] {err} | {debug}")
+                # print(f"[ERROR] {err} | {debug}")
             elif msg.type == Gst.MessageType.EOS:
                 eos_received = True
-                print("[*] EOS confirmed for recording branch")
+                # print("[*] EOS confirmed for recording branch")
     finally:
         # Drain finished VLM responses before final write.
         _apply_vlm_results(state, state.frames_processed)
@@ -1496,19 +1515,20 @@ def main() -> None:
         _write_filtered_state(state)
 
         if not eos_received:
-            print("WARNING: shutting down without EOS confirmation")
+            # print("WARNING: shutting down without EOS confirmation")
+            pass
         pipeline.set_state(Gst.State.NULL)
 
-        print(f"\n{'=' * 60}")
-        print("Session Summary")
-        print(f"Total frames processed   : {state.frames_processed}")
-        print(f"Tracked objects remaining: {len(tracker.objects)}")
-        print(f"Ingest URL               : {state.ingest_url}")
-        print(f"Event frames             : {frames_dir}")
-        print(f"Video file               : {video_path}")
-        print(f"VLM dropped tasks        : {state.vlm_dropped_tasks}")
-        print(f"Ingest dropped tasks     : {state.ingest_dropped_tasks}")
-        print(f"{'=' * 60}")
+        # print(f"\n{'=' * 60}")
+        # print("Session Summary")
+        # print(f"Total frames processed   : {state.frames_processed}")
+        # print(f"Tracked objects remaining: {len(tracker.objects)}")
+        # print(f"Ingest URL               : {state.ingest_url}")
+        # print(f"Event frames             : {frames_dir}")
+        # print(f"Video file               : {video_path}")
+        # print(f"VLM dropped tasks        : {state.vlm_dropped_tasks}")
+        # print(f"Ingest dropped tasks     : {state.ingest_dropped_tasks}")
+        # print(f"{'=' * 60}")
 
 
 if __name__ == "__main__":

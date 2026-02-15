@@ -71,10 +71,10 @@ class NanoLLMBridge:
         for load in loaders:
             try:
                 model = load()
-                print(
-                    "[server] loaded model "
-                    f"model={self.model_name} api={self.api} vision_api={self.vision_api}"
-                )
+                # print(
+                #     "[server] loaded model "
+                #     f"model={self.model_name} api={self.api} vision_api={self.vision_api}"
+                # )
                 return model
             except Exception as exc:
                 last_error = exc
@@ -289,10 +289,10 @@ class NanoLLMBridge:
                     text="Return only a valid JSON object. Do not include markdown.",
                 )
 
-            print(
-                "[server][request] "
-                f"text_parts={text_count} images={image_count} max_tokens={max_tokens}"
-            )
+            # print(
+            #     "[server][request] "
+            #     f"text_parts={text_count} images={image_count} max_tokens={max_tokens}"
+            # )
             embedded = chat.embed_chat()
             embedding = embedded[0] if isinstance(embedded, (tuple, list)) else embedded
             generated = self._model.generate(
@@ -375,8 +375,8 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._send_json(400, {"error": str(exc)})
         except Exception as exc:
-            print(f"[server][error] {exc}")
-            print(traceback.format_exc())
+            # print(f"[server][error] {exc}")
+            # print(traceback.format_exc())
             self._send_json(500, {"error": str(exc)})
 
     def log_message(self, format: str, *args) -> None:
@@ -401,7 +401,7 @@ def main() -> None:
     )
     Handler.bridge = bridge
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"[server] listening on http://{args.host}:{args.port}")
+    # print(f"[server] listening on http://{args.host}:{args.port}")
     server.serve_forever()
 
 

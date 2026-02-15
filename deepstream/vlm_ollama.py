@@ -127,16 +127,16 @@ class OllamaVLM:
     ) -> Dict[str, Any]:
         before_b64 = self._encode_image_b64(before_bgr)
         current_b64 = self._encode_image_b64(current_bgr)
-        print(f"[VLM request] model={self.model}")
-        print(f"[VLM request] prompt={prompt}")
-        print(
-            "[VLM request] before_b64 "
-            f"len={len(before_b64)} preview={self._preview_b64(before_b64)}"
-        )
-        print(
-            "[VLM request] current_b64 "
-            f"len={len(current_b64)} preview={self._preview_b64(current_b64)}"
-        )
+        # print(f"[VLM request] model={self.model}")
+        # print(f"[VLM request] prompt={prompt}")
+        # print(
+        #     "[VLM request] before_b64 "
+        #     f"len={len(before_b64)} preview={self._preview_b64(before_b64)}"
+        # )
+        # print(
+        #     "[VLM request] current_b64 "
+        #     f"len={len(current_b64)} preview={self._preview_b64(current_b64)}"
+        # )
 
         response = chat(
             model=self.model,
@@ -152,8 +152,11 @@ class OllamaVLM:
         )
         msg = response.get("message", {})
         content = msg.get("content", "")
-        print(f"[VLM raw output] {content}")
-        return self._safe_json_from_content(content)
+        # print(f"[VLM raw output] {content}")
+        parsed = self._safe_json_from_content(content)
+        if not parsed:
+            print("[VLM warn] payload returned non-JSON content")
+        return parsed
 
     @staticmethod
     def _build_content_message(kind: str, **kwargs: Any) -> str:

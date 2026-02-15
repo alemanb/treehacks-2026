@@ -164,11 +164,11 @@ class NanoLLMVLM:
     ) -> Dict[str, Any]:
         before_b64 = self._encode_image_b64(before_bgr)
         current_b64 = self._encode_image_b64(current_bgr)
-        print(
-            "[VLM request] "
-            f"model={self.model} max_tokens={self.max_new_tokens} "
-            f"before_b64_len={len(before_b64)} current_b64_len={len(current_b64)}"
-        )
+        # print(
+        #     "[VLM request] "
+        #     f"model={self.model} max_tokens={self.max_new_tokens} "
+        #     f"before_b64_len={len(before_b64)} current_b64_len={len(current_b64)}"
+        # )
 
         payload = {
             "model": self.model,
@@ -199,7 +199,7 @@ class NanoLLMVLM:
         try:
             raw = self._post_json(payload)
             content = self._extract_content(raw)
-            print(f"[VLM raw output] {content}")
+            # print(f"[VLM raw output] {content}")
             parsed = self._safe_json_from_content(content)
             if parsed:
                 return parsed
@@ -228,7 +228,7 @@ class NanoLLMVLM:
         try:
             raw = self._post_json(fallback_payload)
             content = self._extract_content(raw)
-            print(f"[VLM raw output][fallback] {content}")
+            # print(f"[VLM raw output][fallback] {content}")
             parsed = self._safe_json_from_content(content)
             if parsed:
                 return parsed

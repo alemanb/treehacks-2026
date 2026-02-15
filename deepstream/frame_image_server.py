@@ -125,7 +125,8 @@ class FrameImageHandler(BaseHTTPRequestHandler):
         self._send_json(405, {"error": "POST not supported by this service"})
 
     def log_message(self, fmt: str, *args: Any) -> None:
-        print(f"[frame-image-server] {self.address_string()} - {fmt % args}")
+        pass
+        # print(f"[frame-image-server] {self.address_string()} - {fmt % args}")
 
 
 def main() -> None:
@@ -145,15 +146,15 @@ def main() -> None:
         frames_dir=args.frames_dir,
         advertised_host=advertised_host,
     )
-    print("=" * 60)
-    print("Frame image server running")
-    print(f"Bind         : {args.bind_host}:{args.port}")
-    print(f"Advertised   : {advertised_host}")
-    print(f"Frames dir   : {args.frames_dir}")
-    print("POST         : disabled")
-    print(f"Frame path   : /<frame_uuid>")
-    print(f"Link format  : {advertised_host}:{args.port}/<frame_uuid>")
-    print("=" * 60)
+    # print("=" * 60)
+    # print("Frame image server running")
+    # print(f"Bind         : {args.bind_host}:{args.port}")
+    # print(f"Advertised   : {advertised_host}")
+    # print(f"Frames dir   : {args.frames_dir}")
+    # print("POST         : disabled")
+    # print(f"Frame path   : /<frame_uuid>")
+    # print(f"Link format  : {advertised_host}:{args.port}/<frame_uuid>")
+    # print("=" * 60)
     server.serve_forever()
 
 
