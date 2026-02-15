@@ -13,9 +13,14 @@ import configparser
 import json
 import os
 import queue
+import socket
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, Deque, Dict, List, Set, Tuple
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
 
 import cv2
 import gi
@@ -26,7 +31,11 @@ gi.require_version("Gst", "1.0")
 from gi.repository import GLib, Gst
 
 from object_tracker import ObjectTracker
-from vlm_ollama import OllamaVLM
+from vlm_nano_llm import NanoLLMVLM
+
+INGEST_URL_DEFAULT = "https://alemanb--treehacks-vector-search-web.modal.run/ingest"
+INGEST_DEVICE_ID_DEFAULT = "jetson_super_01"
+FRAME_IMAGE_PORT_DEFAULT = 8090
 
 
 def _cfg_get(cfg: configparser.ConfigParser, section: str, key: str, fallback=None):
@@ -58,12 +67,18 @@ class RuntimeState:
         self,
         tracker: ObjectTracker,
         frames_dir: str,
-        filtered_path: str,
-        vlm_client: OllamaVLM,
+        ingest_url: str,
+        ingest_device_id: str,
+        frame_link_host: str,
+        frame_link_port: int,
+        vlm_client: NanoLLMVLM,
     ):
         self.tracker = tracker
         self.frames_dir = frames_dir
-        self.filtered_path = filtered_path
+        self.ingest_url = ingest_url
+        self.ingest_device_id = ingest_device_id
+        self.frame_link_host = frame_link_host
+        self.frame_link_port = int(frame_link_port)
         self.vlm_client = vlm_client
         self.frames_processed = 0
         self.bbox_history_by_id: Dict[int, List[Dict[str, Any]]] = {}
@@ -79,6 +94,9 @@ class RuntimeState:
         self.vlm_stop_event = threading.Event()
         self.vlm_workers: List[threading.Thread] = []
         self.vlm_dropped_tasks = 0
+        self.ingest_tasks: "queue.Queue[Dict[str, Any]]" = queue.Queue(maxsize=256)
+        self.ingest_workers: List[threading.Thread] = []
+        self.ingest_dropped_tasks = 0
         self.active_snapshot: Dict[int, Dict[str, Any]] = {}
 
 
@@ -89,6 +107,21 @@ def _safe_timestamp_for_filename(timestamp: str) -> str:
         .replace("+", "_plus_")
         .replace("/", "_")
     )
+
+
+def _detect_local_ip() -> str:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # No packets are sent, this only resolves the preferred outbound interface/IP.
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+        if ip and not ip.startswith("127."):
+            return ip
+    except Exception:
+        pass
+    finally:
+        sock.close()
+    return "127.0.0.1"
 
 
 def _save_change_frame(
@@ -131,6 +164,34 @@ def _get_before_frame(state: RuntimeState, frame_index: int):
         if idx < frame_index and fallback is None:
             fallback = frame_bgr
     return fallback
+
+
+def _crop_frame_with_context(
+    frame_bgr,
+    bbox_xywh: List[float],
+    context_ratio: float = 0.75,
+    min_context_px: int = 48,
+):
+    if frame_bgr is None:
+        return None
+    if not isinstance(bbox_xywh, list) or len(bbox_xywh) != 4:
+        return frame_bgr
+
+    h, w = frame_bgr.shape[:2]
+    x, y, bw, bh = [float(v) for v in bbox_xywh]
+    if bw <= 1.0 or bh <= 1.0:
+        return frame_bgr
+
+    pad_x = max(float(min_context_px), bw * float(context_ratio))
+    pad_y = max(float(min_context_px), bh * float(context_ratio))
+
+    x1 = max(0, int(np.floor(x - pad_x)))
+    y1 = max(0, int(np.floor(y - pad_y)))
+    x2 = min(w, int(np.ceil(x + bw + pad_x)))
+    y2 = min(h, int(np.ceil(y + bh + pad_y)))
+    if x2 <= x1 or y2 <= y1:
+        return frame_bgr
+    return frame_bgr[y1:y2, x1:x2].copy()
 
 
 def _iou_xywh(a: List[float], b: List[float]) -> float:
@@ -201,67 +262,164 @@ def _append_filtered_bbox(
 
 
 def _write_filtered_state(state: RuntimeState) -> None:
-    def _normalize_object_history(obj: Dict[str, Any]) -> None:
-        bbox_history = list(obj.get("bbox_history", []))
-        move_reason_history = list(obj.get("move_reason_history", []))
-        disappear_checks = list(obj.get("disappear_checks", []))
-
-        # Rule: transitions == len(bbox_history) - 1
-        transitions = len(move_reason_history) + len(disappear_checks)
-        required_transitions = max(0, len(bbox_history) - 1)
-
-        if transitions > required_transitions:
-            overflow = transitions - required_transitions
-            while overflow > 0 and disappear_checks:
-                disappear_checks.pop()
-                overflow -= 1
-            while overflow > 0 and move_reason_history:
-                move_reason_history.pop()
-                overflow -= 1
-
-        if transitions < required_transitions:
-            # Do not fabricate reasons/checks; trim unmatched bbox tail.
-            keep_bbox = max(1, transitions + 1)
-            bbox_history = bbox_history[:keep_bbox]
-
-        obj["bbox_history"] = bbox_history
-        obj["move_reason_history"] = move_reason_history
-        obj["disappear_checks"] = disappear_checks
-
-    merged: Dict[int, Dict[str, Any]] = {}
-    merged.update(state.archived_objects)
-    merged.update(state.filtered_objects)
-    for obj in merged.values():
-        _normalize_object_history(obj)
-    payload = {
-        "objects": [merged[k] for k in sorted(merged.keys())]
-    }
-    with open(state.filtered_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+    # Legacy no-op: file persistence replaced by async ingest pipeline.
+    _ = state
 
 
-def _enqueue_vlm_task(state: RuntimeState, task: Dict[str, Any]) -> None:
+def _post_ingest_observation(state: RuntimeState, payload: Dict[str, Any]) -> None:
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib_request.Request(
+        url=state.ingest_url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib_request.urlopen(req, timeout=1.5):
+        return
+
+
+def _enqueue_ingest_task(state: RuntimeState, task: Dict[str, Any]) -> None:
     try:
-        state.vlm_tasks.put_nowait(task)
+        state.ingest_tasks.put_nowait(task)
         return
     except queue.Full:
         pass
 
+    try:
+        _ = state.ingest_tasks.get_nowait()
+        state.ingest_tasks.task_done()
+    except queue.Empty:
+        pass
+
+    try:
+        state.ingest_tasks.put_nowait(task)
+    except queue.Full:
+        state.ingest_dropped_tasks += 1
+
+
+def _build_ingest_observation(
+    state: RuntimeState, kind: str, task: Dict[str, Any], response: Dict[str, Any]
+) -> Dict[str, Any]:
+    timestamp = str(task.get("timestamp", datetime.now(timezone.utc).isoformat()))
+    encoded_ts = urllib_parse.quote(timestamp, safe="")
+    frame_link = f"{state.frame_link_host}:{state.frame_link_port}/{encoded_ts}"
+    obj_label = str(task.get("label", task.get("new_label", "object"))).strip() or "object"
+    raw_color = str(response.get("object_color", "")).strip().lower()
+    object_color = raw_color if raw_color else "unknown"
+
+    motion_vector = task.get("motion_vector")
+    if (
+        isinstance(motion_vector, list)
+        and len(motion_vector) == 2
+        and all(isinstance(v, (int, float)) for v in motion_vector)
+    ):
+        normalized_motion_vector = [float(motion_vector[0]), float(motion_vector[1])]
+    else:
+        normalized_motion_vector = [0.0, 0.0]
+
+    if kind == "move":
+        if bool(response.get("did_move", False)):
+            content = f"A {object_color} {obj_label} was moved."
+        else:
+            content = f"A {object_color} {obj_label} was observed with no clear movement."
+    elif kind == "disappear":
+        if bool(response.get("did_leave_frame", False)):
+            content = f"A {object_color} {obj_label} left the frame."
+        else:
+            content = (
+                f"A {object_color} {obj_label} was not detected but may still be present."
+            )
+    elif kind == "reappear":
+        if bool(response.get("is_same_object", False)):
+            content = f"A {object_color} {obj_label} appears to be the same object as before."
+        else:
+            content = f"A {object_color} {obj_label} appears to be a newly detected object."
+    else:
+        content = f"A {object_color} {obj_label} event was detected."
+
+    metadata = {
+        "object": obj_label,
+        "color": object_color,
+        "timestamp": timestamp,
+        "frame_link": frame_link,
+        "motion_vector": normalized_motion_vector,
+        "device_id": state.ingest_device_id,
+    }
+    return {"content": content, "metadata": metadata}
+
+
+def _run_ingest_workers(state: RuntimeState, num_workers: int = 1) -> None:
+    def _worker() -> None:
+        while True:
+            if state.vlm_stop_event.is_set() and state.ingest_tasks.empty():
+                break
+            try:
+                payload = state.ingest_tasks.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                _post_ingest_observation(state, payload)
+            except urllib_error.URLError as exc:
+                print(f"WARNING: ingest request failed: {exc}")
+            except Exception as exc:
+                print(f"WARNING: ingest unexpected error: {exc}")
+            finally:
+                state.ingest_tasks.task_done()
+
+    for idx in range(max(1, int(num_workers))):
+        thread = threading.Thread(
+            target=_worker, daemon=True, name=f"ingest-worker-{idx}"
+        )
+        thread.start()
+        state.ingest_workers.append(thread)
+
+
+def _enqueue_vlm_task(state: RuntimeState, task: Dict[str, Any]) -> None:
+    kind = str(task.get("kind", "unknown"))
+    frame_index = int(task.get("frame_index", -1))
+    object_ref = int(task.get("object_id", task.get("new_id", -1)))
+    try:
+        state.vlm_tasks.put_nowait(task)
+        print(
+            "[PRE-VLM][queued] "
+            f"kind={kind} frame={frame_index} object={object_ref} "
+            f"queue_size={state.vlm_tasks.qsize()}"
+        )
+        return
+    except queue.Full:
+        print(
+            "[PRE-VLM][queue_full] "
+            f"kind={kind} frame={frame_index} object={object_ref} dropping_oldest=true"
+        )
+
     # Buffer policy: drop oldest queued work, keep newest scene state.
     try:
         _ = state.vlm_tasks.get_nowait()
+        state.vlm_tasks.task_done()
     except queue.Empty:
         pass
 
     try:
         state.vlm_tasks.put_nowait(task)
+        print(
+            "[PRE-VLM][queued_after_drop] "
+            f"kind={kind} frame={frame_index} object={object_ref} "
+            f"queue_size={state.vlm_tasks.qsize()}"
+        )
     except queue.Full:
         state.vlm_dropped_tasks += 1
+        print(
+            "[PRE-VLM][dropped] "
+            f"kind={kind} frame={frame_index} object={object_ref} "
+            f"total_dropped={state.vlm_dropped_tasks}"
+        )
 
 
 def _run_vlm_workers(state: RuntimeState, num_workers: int = 2) -> None:
     def _worker() -> None:
-        while not state.vlm_stop_event.is_set():
+        while True:
+            if state.vlm_stop_event.is_set() and state.vlm_tasks.empty():
+                break
             try:
                 task = state.vlm_tasks.get(timeout=0.2)
             except queue.Empty:
@@ -269,29 +427,51 @@ def _run_vlm_workers(state: RuntimeState, num_workers: int = 2) -> None:
 
             kind = str(task.get("kind", ""))
             response: Dict[str, Any] = {}
+            frame_index = int(task.get("frame_index", -1))
+            object_ref = int(task.get("object_id", task.get("new_id", -1)))
+            start_ts = time.time()
             try:
+                bbox_xywh = task.get("bbox_xywh")
+                before_bgr = task.get("before_bgr")
+                current_bgr = task.get("current_bgr")
+                vlm_before = _crop_frame_with_context(before_bgr, bbox_xywh)
+                vlm_current = _crop_frame_with_context(current_bgr, bbox_xywh)
+                print(
+                    "[PRE-VLM][start] "
+                    f"kind={kind} frame={frame_index} object={object_ref}"
+                )
                 if kind == "move":
                     response = state.vlm_client.assess_move(
                         label=str(task["label"]),
-                        before_bgr=task["before_bgr"],
-                        current_bgr=task["current_bgr"],
+                        before_bgr=vlm_before,
+                        current_bgr=vlm_current,
                     )
                 elif kind == "disappear":
                     response = state.vlm_client.assess_disappear(
                         label=str(task["label"]),
-                        before_bgr=task["before_bgr"],
-                        current_bgr=task["current_bgr"],
+                        before_bgr=vlm_before,
+                        current_bgr=vlm_current,
                     )
                 elif kind == "reappear":
                     response = state.vlm_client.assess_reappearance(
                         new_label=str(task["new_label"]),
                         old_label=str(task["old_label"]),
-                        before_bgr=task["before_bgr"],
-                        current_bgr=task["current_bgr"],
+                        before_bgr=vlm_before,
+                        current_bgr=vlm_current,
                     )
             except Exception as exc:
                 response = {"error": str(exc)}
+            finally:
+                state.vlm_tasks.task_done()
 
+            latency_ms = int((time.time() - start_ts) * 1000)
+            error_text = str(response.get("error", "")).strip()
+            error_suffix = f" error={error_text}" if error_text else ""
+            print(
+                "[POST-VLM][done] "
+                f"kind={kind} frame={frame_index} object={object_ref} "
+                f"latency_ms={latency_ms} keys={sorted(response.keys())}{error_suffix}"
+            )
             state.vlm_results.put({"task": task, "response": response})
 
     for idx in range(max(1, int(num_workers))):
@@ -311,12 +491,20 @@ def _apply_vlm_results(state: RuntimeState, frame_index: int) -> None:
         task = item.get("task", {})
         response = item.get("response", {})
         kind = str(task.get("kind", ""))
+        _enqueue_ingest_task(state, _build_ingest_observation(state, kind, task, response))
 
         if kind == "move":
             object_id = _resolve_object_id(state, int(task.get("object_id", -1)))
             if object_id < 0:
                 continue
             move_reason_text = str(response.get("move_reason", "")).strip()
+            move_content = str(response.get("content", "")).strip()
+            if move_reason_text or move_content:
+                print(
+                    "[VLM reason][move] "
+                    f"object_id={object_id} did_move={bool(response.get('did_move', False))} "
+                    f"reason={move_reason_text or 'unknown'} content={move_content or 'n/a'}"
+                )
             if bool(response.get("did_move", False)) and move_reason_text:
                 filtered_obj = _ensure_filtered_object(
                     state, object_id, str(task.get("label", "unknown"))
@@ -356,6 +544,15 @@ def _apply_vlm_results(state: RuntimeState, frame_index: int) -> None:
             object_id = _resolve_object_id(state, int(task.get("object_id", -1)))
             if object_id < 0:
                 continue
+            disappear_reason = str(response.get("reason", "")).strip()
+            disappear_content = str(response.get("content", "")).strip()
+            if disappear_reason or disappear_content:
+                print(
+                    "[VLM reason][disappear] "
+                    f"object_id={object_id} did_leave_frame={bool(response.get('did_leave_frame', False))} "
+                    f"still_exists={bool(response.get('still_exists', False))} "
+                    f"reason={disappear_reason or 'unknown'} content={disappear_content or 'n/a'}"
+                )
             target = state.filtered_objects.get(object_id) or state.archived_objects.get(object_id)
             if target is None:
                 target = _ensure_filtered_object(state, object_id, str(task.get("label", "unknown")))
@@ -389,6 +586,15 @@ def _apply_vlm_results(state: RuntimeState, frame_index: int) -> None:
             old_id = int(task.get("old_id", -1))
             if new_id < 0 or old_id < 0:
                 continue
+            reappear_reason = str(response.get("reason", "")).strip()
+            reappear_content = str(response.get("content", "")).strip()
+            if reappear_reason or reappear_content:
+                print(
+                    "[VLM reason][reappear] "
+                    f"new_id={new_id} old_id={old_id} "
+                    f"is_same_object={bool(response.get('is_same_object', False))} "
+                    f"reason={reappear_reason or 'unknown'} content={reappear_content or 'n/a'}"
+                )
             new_canonical = _resolve_object_id(state, new_id)
             target = _ensure_filtered_object(
                 state, new_canonical, str(task.get("new_label", "unknown"))
@@ -664,6 +870,18 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
         new_ids = sorted(current_ids - prev_ids)
         common_ids = sorted(current_ids & prev_ids)
         missing_ids = sorted(prev_ids - current_ids)
+        if new_ids or common_ids or missing_ids:
+            print(
+                "[POST-YOLO][tracker] "
+                f"frame={frame_index} detections={len(detections)} "
+                f"active={len(current_ids)} new={new_ids} common={common_ids} "
+                f"missing={missing_ids}"
+            )
+        elif frame_index % 30 == 0:
+            print(
+                "[POST-YOLO][heartbeat] "
+                f"frame={frame_index} detections={len(detections)} active={len(current_ids)}"
+            )
 
         for object_id in new_ids:
             obj = current_objects[object_id]
@@ -705,8 +923,11 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
                         "new_id": int(obj.get("object_id", object_id)),
                         "old_id": best_old_id,
                         "frame_index": frame_index,
+                        "timestamp": timestamp,
                         "new_label": label,
                         "old_label": old_label,
+                        "bbox_xywh": bbox_xywh,
+                        "motion_vector": [0.0, 0.0],
                         "before_bgr": before_bgr.copy(),
                         "current_bgr": frame_bgr.copy(),
                     },
@@ -751,6 +972,7 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
 
             from_xy = _xywh_centroid_px(prev_bbox)
             to_xy = _xywh_centroid_px(curr_bbox)
+            motion_vector = [float(to_xy[0] - from_xy[0]), float(to_xy[1] - from_xy[1])]
             _append_trail_segment(state, object_id, from_xy, to_xy)
             if object_id not in state.bbox_history_by_id:
                 _append_bbox_history(
@@ -774,6 +996,7 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
                         "frame_index": frame_index,
                         "timestamp": timestamp,
                         "detection_confidence": confidence,
+                        "motion_vector": motion_vector,
                         "before_bgr": before_bgr.copy(),
                         "current_bgr": frame_bgr.copy(),
                     },
@@ -813,7 +1036,10 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
                         "kind": "disappear",
                         "object_id": object_id,
                         "label": prev_label,
+                        "bbox_xywh": prev_bbox,
                         "frame_index": frame_index,
+                        "timestamp": timestamp,
+                        "motion_vector": [0.0, 0.0],
                         "before_bgr": before_bgr.copy(),
                         "current_bgr": frame_bgr.copy(),
                     },
@@ -892,6 +1118,60 @@ def main() -> None:
         default="",
         help="Optional explicit output path for recording file",
     )
+    parser.add_argument(
+        "--vlm-model",
+        type=str,
+        default="Efficient-Large-Model/VILA1.5-3b",
+        help="NanoLLM model repository/name",
+    )
+    parser.add_argument(
+        "--vlm-base-url",
+        type=str,
+        default="http://127.0.0.1:8080/v1/chat/completions",
+        help="NanoLLM OpenAI-compatible endpoint URL",
+    )
+    parser.add_argument(
+        "--vlm-timeout-sec",
+        type=float,
+        default=15.0,
+        help="Per-request timeout for NanoLLM HTTP calls",
+    )
+    parser.add_argument(
+        "--vlm-api",
+        type=str,
+        default="mlc",
+        help="NanoLLM backend API (for example: mlc, hf, awq)",
+    )
+    parser.add_argument(
+        "--vlm-vision-api",
+        type=str,
+        default="auto",
+        help="NanoLLM vision backend (for example: auto, trt, hf)",
+    )
+    parser.add_argument(
+        "--vlm-max-context-len",
+        type=int,
+        default=256,
+        help="NanoLLM context window length",
+    )
+    parser.add_argument(
+        "--vlm-max-new-tokens",
+        type=int,
+        default=128,
+        help="Max completion tokens per VLM request",
+    )
+    parser.add_argument(
+        "--frame-link-host",
+        type=str,
+        default="",
+        help="Host/IP for frame links in ingest metadata (default: auto-detect local LAN IP).",
+    )
+    parser.add_argument(
+        "--frame-link-port",
+        type=int,
+        default=FRAME_IMAGE_PORT_DEFAULT,
+        help=f"Port for frame image links in ingest metadata (default: {FRAME_IMAGE_PORT_DEFAULT}).",
+    )
     args = parser.parse_args()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -914,29 +1194,35 @@ def main() -> None:
     os.makedirs(frames_dir, exist_ok=True)
     os.makedirs(events_dir, exist_ok=True)
 
-    filtered_path = os.path.join(events_dir, "filtered_events.json")
-
     if args.video_file:
         video_path = args.video_file
     else:
         video_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         video_path = os.path.join(recordings_dir, f"tracking_{video_stamp}.mkv")
 
-    with open(filtered_path, "w", encoding="utf-8") as f:
-        json.dump({"objects": []}, f, indent=2)
-
     tracker = ObjectTracker(
         motion_threshold=args.motion_threshold,
         max_missing_frames=args.max_missing,
     )
-    vlm_client = OllamaVLM(model="ahmadwaqar/smolvlm2-2.2b-instruct:latest")
+    frame_link_host = args.frame_link_host.strip() or _detect_local_ip()
+    vlm_client = NanoLLMVLM(
+        model=args.vlm_model,
+        base_url=args.vlm_base_url,
+        timeout_sec=args.vlm_timeout_sec,
+        max_new_tokens=args.vlm_max_new_tokens,
+    )
     state = RuntimeState(
         tracker=tracker,
         frames_dir=frames_dir,
-        filtered_path=filtered_path,
+        ingest_url=INGEST_URL_DEFAULT,
+        ingest_device_id=INGEST_DEVICE_ID_DEFAULT,
+        frame_link_host=frame_link_host,
+        frame_link_port=args.frame_link_port,
         vlm_client=vlm_client,
     )
-    _run_vlm_workers(state, num_workers=2)
+    # Sidecar serves one model instance; a single client worker avoids timeout churn.
+    _run_vlm_workers(state, num_workers=1)
+    _run_ingest_workers(state, num_workers=1)
 
     Gst.init(None)
     pipeline = Gst.Pipeline.new("deepstream-yolo-webcam")
@@ -1142,9 +1428,14 @@ def main() -> None:
     print("=" * 60)
     print("DeepStream YOLO webcam tracker running")
     print(f"Webcam device : /dev/video{args.source}")
-    print(f"Filtered file : {filtered_path}")
+    print(f"Ingest URL    : {state.ingest_url}")
+    print(
+        f"Frame links   : {state.frame_link_host}:{state.frame_link_port}/<timestamp>"
+    )
     print(f"Video file    : {video_path}")
     print(f"Event frames  : {frames_dir}")
+    print(f"VLM endpoint  : {args.vlm_base_url}")
+    print(f"VLM model     : {args.vlm_model}")
     print("VLM mode      : async (buffered)")
     print("Press Ctrl+C to stop")
     print("=" * 60)
@@ -1191,9 +1482,13 @@ def main() -> None:
         # Drain finished VLM responses before final write.
         _apply_vlm_results(state, state.frames_processed)
         state.vlm_stop_event.set()
+        state.vlm_tasks.join()
         for thread in state.vlm_workers:
-            thread.join(timeout=0.5)
+            thread.join()
         _apply_vlm_results(state, state.frames_processed)
+        state.ingest_tasks.join()
+        for thread in state.ingest_workers:
+            thread.join()
 
         written_session_end: Set[int] = set()
         for object_id, obj in tracker.objects.items():
@@ -1219,10 +1514,11 @@ def main() -> None:
         print("Session Summary")
         print(f"Total frames processed   : {state.frames_processed}")
         print(f"Tracked objects remaining: {len(tracker.objects)}")
-        print(f"Filtered file            : {filtered_path}")
+        print(f"Ingest URL               : {state.ingest_url}")
         print(f"Event frames             : {frames_dir}")
         print(f"Video file               : {video_path}")
         print(f"VLM dropped tasks        : {state.vlm_dropped_tasks}")
+        print(f"Ingest dropped tasks     : {state.ingest_dropped_tasks}")
         print(f"{'=' * 60}")
 
 

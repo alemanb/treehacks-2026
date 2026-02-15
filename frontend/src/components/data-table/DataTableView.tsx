@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react"
 import {
   flexRender,
   getCoreRowModel,
@@ -12,7 +13,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { columns } from "./columns"
+import { Button } from "@/components/ui/button"
+import { createColumns } from "./columns"
 
 interface DataTableViewProps {
   results: SearchResult[]
@@ -25,6 +27,42 @@ export function DataTableView({
   totalResults,
   isLoading = false,
 }: DataTableViewProps) {
+  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null)
+  const [selectedTimestamp, setSelectedTimestamp] = useState<string | null>(null)
+  const [imageLoadFailed, setImageLoadFailed] = useState(false)
+
+  const closeModal = () => {
+    setSelectedImageUrl(null)
+    setSelectedTimestamp(null)
+    setImageLoadFailed(false)
+  }
+
+  const columns = useMemo(
+    () =>
+      createColumns((timestamp: string) => {
+        if (!timestamp) return
+
+        const matchingResult = results.find(
+          (result) => result.metadata.timestamp === timestamp,
+        )
+        const rawFrameLink =
+          (
+            matchingResult?.metadata as { frame_link?: string } | undefined
+          )?.frame_link?.trim() ?? ""
+        const fallbackUrl = `http://${window.location.hostname}:8090/${encodeURIComponent(timestamp)}`
+        const resolvedUrl = rawFrameLink
+          ? rawFrameLink.startsWith("http://") || rawFrameLink.startsWith("https://")
+            ? rawFrameLink
+            : `http://${rawFrameLink}`
+          : fallbackUrl
+
+        setSelectedTimestamp(timestamp)
+        setImageLoadFailed(false)
+        setSelectedImageUrl(resolvedUrl)
+      }),
+    [results],
+  )
+
   const table = useReactTable({
     data: results,
     columns,
@@ -94,6 +132,43 @@ export function DataTableView({
               <option value={50}>50 results</option>
             </select> */}
           {/* </div> */}
+        </div>
+      )}
+
+      {selectedImageUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Frame image viewer"
+          onClick={closeModal}
+        >
+          <div
+            className="w-full max-w-5xl rounded-lg bg-background border shadow-xl p-4 space-y-3"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground truncate">
+                {selectedTimestamp}
+              </p>
+              <Button variant="outline" size="sm" onClick={closeModal}>
+                Close
+              </Button>
+            </div>
+
+            {imageLoadFailed ? (
+              <p className="text-sm text-destructive">
+                Could not load image for this event.
+              </p>
+            ) : (
+              <img
+                src={selectedImageUrl}
+                alt={selectedTimestamp ?? "Frame image"}
+                className="w-full h-auto max-h-[75vh] object-contain rounded-md border"
+                onError={() => setImageLoadFailed(true)}
+              />
+            )}
+          </div>
         </div>
       )}
     </div>

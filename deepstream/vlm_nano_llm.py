@@ -2,15 +2,25 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import Any, Dict
+from typing import Any, Dict, List
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 import cv2
-from ollama import chat
 
 
-class OllamaVLM:
-    def __init__(self, model: str = "moondream:1.8b") -> None:
+class NanoLLMVLM:
+    def __init__(
+        self,
+        model: str = "Efficient-Large-Model/VILA1.5-3b",
+        base_url: str = "http://127.0.0.1:8080/v1/chat/completions",
+        timeout_sec: float = 15.0,
+        max_new_tokens: int = 128,
+    ) -> None:
         self.model = model
+        self.base_url = base_url
+        self.timeout_sec = float(timeout_sec)
+        self.max_new_tokens = int(max_new_tokens)
 
     @staticmethod
     def _encode_image_b64(image_bgr) -> str:
@@ -18,12 +28,6 @@ class OllamaVLM:
         if not ok:
             raise RuntimeError("Failed to JPEG-encode frame for VLM")
         return base64.b64encode(buf).decode("utf-8")
-
-    @staticmethod
-    def _preview_b64(value: str, head: int = 48, tail: int = 24) -> str:
-        if len(value) <= (head + tail + 3):
-            return value
-        return f"{value[:head]}...{value[-tail:]}"
 
     @staticmethod
     def _safe_json_from_content(content: str) -> Dict[str, Any]:
@@ -118,6 +122,39 @@ class OllamaVLM:
             "additionalProperties": False,
         }
 
+    @staticmethod
+    def _extract_content(payload: Dict[str, Any]) -> str:
+        choices = payload.get("choices", [])
+        if not isinstance(choices, list) or not choices:
+            return ""
+        msg = choices[0].get("message", {})
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            return content
+        return str(content)
+
+    def _post_json(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib_request.Request(
+            url=self.base_url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(req, timeout=self.timeout_sec) as resp:
+                raw = resp.read().decode("utf-8", errors="ignore")
+        except urllib_error.HTTPError as exc:
+            err_body = ""
+            try:
+                err_body = exc.read().decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"HTTP {exc.code} from NanoLLM API: {err_body or str(exc)}"
+            ) from exc
+        return json.loads(raw) if raw else {}
+
     def _ask_json(
         self,
         prompt: str,
@@ -127,33 +164,79 @@ class OllamaVLM:
     ) -> Dict[str, Any]:
         before_b64 = self._encode_image_b64(before_bgr)
         current_b64 = self._encode_image_b64(current_bgr)
-        print(f"[VLM request] model={self.model}")
-        print(f"[VLM request] prompt={prompt}")
         print(
-            "[VLM request] before_b64 "
-            f"len={len(before_b64)} preview={self._preview_b64(before_b64)}"
-        )
-        print(
-            "[VLM request] current_b64 "
-            f"len={len(current_b64)} preview={self._preview_b64(current_b64)}"
+            "[VLM request] "
+            f"model={self.model} max_tokens={self.max_new_tokens} "
+            f"before_b64_len={len(before_b64)} current_b64_len={len(current_b64)}"
         )
 
-        response = chat(
-            model=self.model,
-            format=schema,
-            options={"temperature": 0},
-            messages=[
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{before_b64}"},
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{current_b64}"},
+                        },
+                    ],
+                }
+            ],
+            "temperature": 0,
+            "max_tokens": self.max_new_tokens,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "vlm_response", "schema": schema},
+            },
+        }
+
+        try:
+            raw = self._post_json(payload)
+            content = self._extract_content(raw)
+            print(f"[VLM raw output] {content}")
+            parsed = self._safe_json_from_content(content)
+            if parsed:
+                return parsed
+            print("[VLM warn] primary payload returned non-JSON content")
+        except urllib_error.URLError as exc:
+            raise RuntimeError(
+                "NanoLLM server not reachable. Is sidecar running on "
+                f"{self.base_url}? error={exc}"
+            ) from exc
+        except Exception as exc:
+            raise RuntimeError(f"NanoLLM HTTP request failed: {exc}") from exc
+
+        fallback_payload = {
+            "model": self.model,
+            "messages": [
                 {
                     "role": "user",
                     "content": prompt,
                     "images": [before_b64, current_b64],
                 }
             ],
-        )
-        msg = response.get("message", {})
-        content = msg.get("content", "")
-        print(f"[VLM raw output] {content}")
-        return self._safe_json_from_content(content)
+            "temperature": 0,
+            "max_tokens": self.max_new_tokens,
+            "format": schema,
+        }
+        try:
+            raw = self._post_json(fallback_payload)
+            content = self._extract_content(raw)
+            print(f"[VLM raw output][fallback] {content}")
+            parsed = self._safe_json_from_content(content)
+            if parsed:
+                return parsed
+            print("[VLM warn] fallback payload returned non-JSON content")
+        except Exception:
+            pass
+
+        return {}
 
     @staticmethod
     def _build_content_message(kind: str, **kwargs: Any) -> str:
@@ -219,7 +302,6 @@ class OllamaVLM:
             suggested_label = str(result.get("new_label", "")).strip() or str(label).strip()
             confidence = float(result.get("confidence", 0.0) or 0.0)
 
-            # Invalid: model says it moved but provides no reason -> regenerate.
             if did_move and not move_reason:
                 if attempts >= 3:
                     content = self._build_content_message(
@@ -263,7 +345,6 @@ class OllamaVLM:
                 "content": content,
             }
 
-        # Should normally return inside loop, keep safe fallback.
         content = self._build_content_message(
             "move",
             did_move=False,
@@ -359,4 +440,3 @@ class OllamaVLM:
             "content": content,
         }
 
-vlm = OllamaVLM()
