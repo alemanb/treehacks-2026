@@ -1,0 +1,8 @@
+__pycache__
+*.onnx
+*onnx.data
+*.engine
+
+utils/
+*.ipynb
+.venv/
