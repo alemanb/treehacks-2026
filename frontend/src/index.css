@@ -5,6 +5,11 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  /* Font Configuration */
+  --font-sans: "Roboto Mono", ui-monospace, monospace;
+  --font-mono: "Roboto Mono", ui-monospace, monospace;
+
+  /* Border Radius */
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -120,6 +125,7 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: "Roboto Mono", ui-monospace, monospace;
   }
 }
 

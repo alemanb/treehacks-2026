@@ -1,10 +1,9 @@
-import { useState } from "react"
 import {
   flexRender,
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table"
-import type { SearchResult, PaginationMetadata } from "@/types/search"
+import type { SearchResult } from "@/types/search"
 import {
   Table,
   TableBody,
@@ -13,45 +12,24 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Button } from "@/components/ui/button"
 import { columns } from "./columns"
 
 interface DataTableViewProps {
   results: SearchResult[]
-  pagination: PaginationMetadata | null
-  onPageChange: (page: number) => void
-  pageSize: number
-  onPageSizeChange: (size: number) => void
+  totalResults: number
   isLoading?: boolean
 }
 
 export function DataTableView({
   results,
-  pagination,
-  onPageChange,
-  pageSize,
-  onPageSizeChange,
+  totalResults,
   isLoading = false,
 }: DataTableViewProps) {
-  const [pageInput, setPageInput] = useState<string>("")
-
   const table = useReactTable({
     data: results,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    manualPagination: true,  // Server-side pagination
-    pageCount: pagination?.total_pages ?? 0,
   })
-
-  const handlePageSubmit = () => {
-    if (!pagination || !pageInput) return
-
-    const page = Number(pageInput)
-    if (page >= 1 && page <= pagination.total_pages) {
-      onPageChange(page)
-    }
-    setPageInput("") // Clear input after submit
-  }
 
   return (
     <div className="space-y-4">
@@ -95,71 +73,27 @@ export function DataTableView({
         </Table>
       </div>
 
-      {pagination && (
+      {totalResults > 0 && (
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between px-2">
-          <div className="flex items-center gap-4 text-sm">
-            <div className="text-muted-foreground">
-              Showing {((pagination.page - 1) * pagination.page_size) + 1} to{" "}
-              {Math.min(pagination.page * pagination.page_size, pagination.total_results)} of{" "}
-              {pagination.total_results} results
-            </div>
-            <div className="flex items-center gap-2">
-              <label htmlFor="pageSize" className="text-muted-foreground whitespace-nowrap">
-                Show:
-              </label>
-              <select
-                id="pageSize"
-                value={pageSize}
-                onChange={(e) => onPageSizeChange(Number(e.target.value))}
-                disabled={isLoading}
-                className="h-8 rounded-md border border-input bg-background px-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <option value={10}>10</option>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
-              </select>
-            </div>
+          <div className="text-sm text-muted-foreground">
+            Showing top {results.length} of {totalResults} results
           </div>
-          {pagination.total_pages > 1 && (
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onPageChange(pagination.page - 1)}
-                disabled={pagination.page === 1 || isLoading}
-              >
-                Previous
-              </Button>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">Page</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={pagination.total_pages}
-                  value={pageInput || pagination.page}
-                  onChange={(e) => setPageInput(e.target.value)}
-                  onFocus={(e) => e.target.select()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      handlePageSubmit()
-                    }
-                  }}
-                  onBlur={handlePageSubmit}
-                  disabled={isLoading}
-                  className="w-16 h-8 rounded-md border border-input bg-background px-2 text-sm text-center ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                />
-                <span className="text-sm text-muted-foreground">of {pagination.total_pages}</span>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onPageChange(pagination.page + 1)}
-                disabled={pagination.page === pagination.total_pages || isLoading}
-              >
-                Next
-              </Button>
-            </div>
-          )}
+          {/* <div className="flex items-center gap-2 text-sm"> */}
+            {/* <label htmlFor="resultLimit" className="text-muted-foreground whitespace-nowrap">
+              Show top:
+            </label>
+            <select
+              id="resultLimit"
+              value={resultLimit}
+              onChange={(e) => onResultLimitChange(Number(e.target.value))}
+              disabled={isLoading}
+              className="h-8 rounded-md border border-input bg-background px-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <option value={10}>10 results</option>
+              <option value={25}>25 results</option>
+              <option value={50}>50 results</option>
+            </select> */}
+          {/* </div> */}
         </div>
       )}
     </div>

@@ -2,8 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 
 interface UrlState {
   query: string
-  page: number
-  pageSize: number
+  resultLimit: number
 }
 
 interface UseUrlStateReturn {
@@ -13,14 +12,13 @@ interface UseUrlStateReturn {
 }
 
 /**
- * Custom hook for managing URL query parameters for pagination state.
+ * Custom hook for managing URL query parameters for search state.
  * Enables bookmarkable and shareable search results.
  */
 export function useUrlState(): UseUrlStateReturn {
   const [urlState, setUrlState] = useState<UrlState>({
     query: "",
-    page: 1,
-    pageSize: 10,
+    resultLimit: 10,
   })
 
   // Parse URL parameters and return state object
@@ -28,18 +26,15 @@ export function useUrlState(): UseUrlStateReturn {
     const params = new URLSearchParams(window.location.search)
 
     const query = params.get("q") || ""
-    const page = parseInt(params.get("page") || "1", 10)
-    const pageSize = parseInt(params.get("size") || "10", 10)
+    const resultLimit = parseInt(params.get("limit") || "10", 10)
 
     // Validate parameters
-    const validatedPage = isNaN(page) || page < 1 ? 1 : page
-    const validatedPageSize = isNaN(pageSize) || pageSize < 1 ? 10 :
-                               pageSize > 100 ? 100 : pageSize
+    const validatedLimit = isNaN(resultLimit) || resultLimit < 1 ? 10 :
+                           resultLimit > 100 ? 100 : resultLimit
 
     return {
       query,
-      page: validatedPage,
-      pageSize: validatedPageSize,
+      resultLimit: validatedLimit,
     }
   }, [])
 
@@ -51,8 +46,7 @@ export function useUrlState(): UseUrlStateReturn {
       // Build URL search params
       const params = new URLSearchParams()
       if (newState.query) params.set("q", newState.query)
-      if (newState.page !== 1) params.set("page", newState.page.toString())
-      if (newState.pageSize !== 10) params.set("size", newState.pageSize.toString())
+      if (newState.resultLimit !== 10) params.set("limit", newState.resultLimit.toString())
 
       // Update URL without page reload
       const newUrl = params.toString()

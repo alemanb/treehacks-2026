@@ -20,7 +20,7 @@ export function InvestigationPage() {
     setSearchDone(true)
   }, [])
 
-  const { search, results, pagination, isLoading, error, pageSize, setPage, setPageSize } = useSearch(handleSearchComplete)
+  const { search, results, totalResults, isLoading, error } = useSearch(handleSearchComplete)
 
   // Restore search from URL on mount
   useEffect(() => {
@@ -29,39 +29,23 @@ export function InvestigationPage() {
       setQuery(urlState.query)
       setPhase("processing")
       setSearchDone(false)
-      // Restore page size from URL
-      if (urlState.pageSize !== pageSize) {
-        setPageSize(urlState.pageSize)
-      }
       // Execute search with URL parameters
-      search(urlState.query, urlState.page)
+      search(urlState.query, urlState.resultLimit)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlState])
 
   // Update URL when search state changes
-  const updateUrl = useCallback((q: string, p: number, ps: number) => {
-    updateUrlState({ query: q, page: p, pageSize: ps })
+  const updateUrl = useCallback((q: string, limit: number) => {
+    updateUrlState({ query: q, resultLimit: limit })
   }, [updateUrlState])
-
-  // Wrap setPage to update URL
-  const handlePageChange = useCallback((page: number) => {
-    setPage(page)
-    updateUrl(query, page, pageSize)
-  }, [setPage, updateUrl, query, pageSize])
-
-  // Wrap setPageSize to update URL
-  const handlePageSizeChange = useCallback((size: number) => {
-    setPageSize(size)
-    updateUrl(query, 1, size) // Reset to page 1 when changing page size
-  }, [setPageSize, updateUrl, query])
 
   function handleSubmit(q: string) {
     setQuery(q)
     setPhase("processing")
     setSearchDone(false)
-    search(q, 1)
-    updateUrl(q, 1, pageSize)
+    search(q, 10) // Default to 10 results
+    updateUrl(q, 10)
   }
 
   function handleTransitionEnd() {
@@ -80,8 +64,8 @@ export function InvestigationPage() {
     if (query) {
       setPhase("processing")
       setSearchDone(false)
-      search(query, 1)
-      updateUrl(query, 1, pageSize)
+      search(query, 10)
+      updateUrl(query, 10)
     }
   }
 
@@ -124,10 +108,7 @@ export function InvestigationPage() {
           ) : (
             <ResultsPhase
               results={results}
-              pagination={pagination}
-              onPageChange={handlePageChange}
-              pageSize={pageSize}
-              onPageSizeChange={handlePageSizeChange}
+              totalResults={totalResults}
               isLoading={isLoading}
               onReset={handleReset}
             />

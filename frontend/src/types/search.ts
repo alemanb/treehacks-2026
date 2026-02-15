@@ -25,3 +25,29 @@ export interface SearchResponse {
   results: SearchResult[]
   pagination: PaginationMetadata
 }
+
+// Intelligent search types (multi-agent workflow)
+export interface SearchConditions {
+  basedOnEarliestTime: boolean
+  confidence: boolean
+  earliest_timestamp: string | null
+  time_window_minutes: number | null
+  reasoning: string
+}
+
+export interface IntelligentSearchResult {
+  id: string
+  content: string
+  likelihood_score: number // Pre-calculated 0-100 score from matching agent
+  vector_score: number // Raw cosine similarity
+  metadata: Metadata
+  timestamp: string
+}
+
+export interface IntelligentSearchResponse {
+  query: string
+  expanded_query: string
+  results: IntelligentSearchResult[]
+  total_count: number
+  conditions_applied: SearchConditions
+}

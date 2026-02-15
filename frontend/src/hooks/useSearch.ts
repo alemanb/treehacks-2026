@@ -1,39 +1,29 @@
 import { useCallback, useRef, useState } from "react"
-import type { SearchResponse, SearchResult, PaginationMetadata } from "@/types/search"
+import type { IntelligentSearchResponse, SearchResult } from "@/types/search"
 
 const BACKEND_URL = "https://alemanb--treehacks-vector-search-web.modal.run"
 
 interface UseSearchReturn {
-  search: (query: string, page?: number, customPageSize?: number) => void
+  search: (query: string, maxResults?: number) => void
   results: SearchResult[]
-  pagination: PaginationMetadata | null
+  totalResults: number
   isLoading: boolean
   error: string | null
-  currentPage: number
-  pageSize: number
-  setPage: (page: number) => void
-  setPageSize: (size: number) => void
 }
 
 export function useSearch(onComplete?: () => void): UseSearchReturn {
   const [results, setResults] = useState<SearchResult[]>([])
-  const [pagination, setPagination] = useState<PaginationMetadata | null>(null)
+  const [totalResults, setTotalResults] = useState<number>(0)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [currentQuery, setCurrentQuery] = useState<string>("")
-  const [currentPage, setCurrentPage] = useState<number>(1)
-  const [pageSize, setPageSize] = useState<number>(10)
   const abortControllerRef = useRef<AbortController | null>(null)
 
   const search = useCallback(
-    async (query: string, page: number = 1, customPageSize?: number) => {
-      // Use customPageSize if provided, otherwise use current pageSize state
-      const effectivePageSize = customPageSize ?? pageSize
+    async (query: string, maxResults: number = 10) => {
+      const effectiveLimit = maxResults
 
       setIsLoading(true)
       setError(null)
-      setCurrentQuery(query)
-      setCurrentPage(page)
 
       // Cancel previous request if still pending
       if (abortControllerRef.current) {
@@ -43,13 +33,13 @@ export function useSearch(onComplete?: () => void): UseSearchReturn {
       abortControllerRef.current = new AbortController()
 
       try {
-        const response = await fetch(`${BACKEND_URL}/search`, {
+        // Call intelligent search - AI returns results ranked by likelihood
+        const response = await fetch(`${BACKEND_URL}/search/intelligent`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             query,
-            page,
-            page_size: effectivePageSize,
+            max_results: effectiveLimit, // Request only the top N results from AI
           }),
           signal: abortControllerRef.current.signal,
         })
@@ -61,10 +51,22 @@ export function useSearch(onComplete?: () => void): UseSearchReturn {
           )
         }
 
-        const data: SearchResponse = await response.json()
+        const data: IntelligentSearchResponse = await response.json()
 
-        setResults(data.results)
-        setPagination(data.pagination)
+        // Convert IntelligentSearchResult to SearchResult format
+        const convertedResults: SearchResult[] = data.results.map(result => ({
+          id: result.id,
+          content: result.content,
+          score: result.likelihood_score / 100, // Convert 0-100 to 0-1 for compatibility
+          metadata: result.metadata,
+        }))
+
+        // Sort by likelihood score (highest to lowest)
+        const sortedResults = convertedResults.sort((a, b) => b.score - a.score)
+
+        setResults(sortedResults)
+        setTotalResults(data.total_count)
+
         onComplete?.()
       } catch (err) {
         // Don't set error if request was aborted (user started new search)
@@ -76,39 +78,14 @@ export function useSearch(onComplete?: () => void): UseSearchReturn {
         abortControllerRef.current = null
       }
     },
-    [onComplete, pageSize],
-  )
-
-  const setPage = useCallback(
-    (page: number) => {
-      if (currentQuery && pagination && page >= 1 && page <= pagination.total_pages) {
-        search(currentQuery, page)
-      }
-    },
-    [currentQuery, pagination, search]
-  )
-
-  const handleSetPageSize = useCallback(
-    (size: number) => {
-      setPageSize(size)
-      // When changing page size, reset to page 1 and pass new size explicitly
-      if (currentQuery) {
-        setCurrentPage(1)
-        search(currentQuery, 1, size)  // Pass the new size explicitly
-      }
-    },
-    [currentQuery, search]
+    [onComplete],
   )
 
   return {
     search,
     results,
-    pagination,
+    totalResults,
     isLoading,
-    error,
-    currentPage,
-    pageSize,
-    setPage,
-    setPageSize: handleSetPageSize
+    error
   }
 }
