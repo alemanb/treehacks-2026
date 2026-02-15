@@ -175,7 +175,14 @@ export function CalendarView({ results }: CalendarViewProps) {
       </PopoverAnchor>
 
       {selectedDateInfo && selectedDate && (
-        <PopoverContent className="w-80">
+        <PopoverContent
+          className="overflow-y-auto w-[var(--radix-popper-anchor-width)] min-w-[240px] max-w-[320px]"
+          align="start"
+          side="bottom"
+          sideOffset={8}
+          collisionPadding={{ top: 16, bottom: 16 }}
+          style={{ maxHeight: "min(70vh, calc(100vh - 120px))" }}
+        >
           <DateDetailCard
             date={selectedDate}
             results={selectedDateInfo.results}
