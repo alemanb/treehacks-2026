@@ -51,28 +51,24 @@ def search_with_conditions(
         "num_candidates": max(1000, max_results * 50),
     }
 
+    # Add temporal filter to kNN query if needed (LOWER BOUND ONLY)
+    if conditions.basedOnEarliestTime and conditions.earliest_timestamp:
+        # Apply range filter: timestamp >= earliest_timestamp
+        # No upper bound - items can be found anytime after the loss event
+        knn_query["filter"] = [
+            {
+                "range": {
+                    "metadata.timestamp": {"gte": conditions.earliest_timestamp}
+                }
+            }
+        ]
+
     # Build search query
     search_body: Dict[str, Any] = {
         "knn": knn_query,
         "size": max_results,
         "_source": ["content", "metadata"],
     }
-
-    # Add temporal filter if needed (LOWER BOUND ONLY)
-    if conditions.basedOnEarliestTime and conditions.earliest_timestamp:
-        # Apply range filter: timestamp >= earliest_timestamp
-        # No upper bound - items can be found anytime after the loss event
-        search_body["query"] = {
-            "bool": {
-                "filter": [
-                    {
-                        "range": {
-                            "metadata.timestamp": {"gte": conditions.earliest_timestamp}
-                        }
-                    }
-                ]
-            }
-        }
 
     # Execute search
     response = es_client.search(index=ES_INDEX, body=search_body)
@@ -204,18 +200,21 @@ def intelligent_matching_function(step_input: StepInput) -> StepOutput:
         else:
             raise ValueError(f"Unexpected conditions type: {type(conditions_content)}")
 
-        # PHASE 3: Calculate temporal filter if temporal indicators detected
-        if conditions.basedOnEarliestTime:
-            temporal_filter = calculate_temporal_filter(original_query)
+        # PHASE 3: Calculate temporal filter directly from the query.
+        # Do this even if the Condition agent missed a temporal cue so small wording
+        # changes (e.g., "sometime last week") still trigger filtering.
+        temporal_filter = calculate_temporal_filter(original_query)
 
-            if temporal_filter:
-                # Update conditions with calculated temporal boundaries
-                conditions.earliest_timestamp = temporal_filter.earliest_timestamp.isoformat()
-                # Note: time_window_minutes is deprecated - we only set lower bounds
-                conditions.reasoning = (
-                    f"{conditions.reasoning}. "
-                    f"Temporal Filter: {temporal_filter.reasoning}"
-                )
+        if temporal_filter:
+            # Ensure temporal filtering is enabled
+            conditions.basedOnEarliestTime = True
+            # Update conditions with calculated temporal boundaries (lower bound only)
+            conditions.earliest_timestamp = temporal_filter.earliest_timestamp.isoformat()
+            # Note: time_window_minutes is deprecated - we only set lower bounds
+            conditions.reasoning = (
+                f"{conditions.reasoning}. "
+                f"Temporal Filter: {temporal_filter.reasoning}"
+            )
 
         # Get max_results from additional_data
         max_results = (

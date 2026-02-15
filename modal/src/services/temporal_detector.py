@@ -66,7 +66,7 @@ TEMPORAL_PATTERNS = {
         "base_confidence": 0.60,
     },
     "time_range": {
-        "pattern": r"\b(last (hour|few hours|day|few days|week|month))\b",
+        "pattern": r"\b(last (hour|few hours|day|few days|week|month)|an? (hour|day|week|month) ago)\b",
         "base_confidence": 0.70,
     },
 }
