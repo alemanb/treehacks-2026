@@ -2,6 +2,7 @@
 .env
 .venv/
 __pycache__/
+
 *.py[cod]
 *$py.class
 *.so
@@ -65,3 +66,11 @@ logs/
 *.pyo
 
 docs/
+*.onnx
+*.onnx.data
+nvdsinfer_custom_impl_Yolo
+*.jpg
+*.jsonl
+*.h264
+*.jpeg
+*.engine
