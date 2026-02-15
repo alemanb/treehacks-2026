@@ -1,12 +1,16 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class Metadata(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     object: str | None = None
     color: str | None = None
     timestamp: str | None = None
     motion_vector: list[float] | None = None
     device_id: str | None = None
+    frame_uuid: str | None = None
+    frame_link: str | None = None
 
 
 class IngestRequest(BaseModel):

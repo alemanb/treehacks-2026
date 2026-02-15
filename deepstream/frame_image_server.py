@@ -1,33 +1,24 @@
 #!/usr/bin/env python3
 """
 Standalone frame image server:
-- serves saved frame images at GET /<timestamp>
+- serves saved frame images at GET /<frame_uuid>
 """
 
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import os
 import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
 from urllib import parse as urllib_parse
+import uuid
 
 
 DEFAULT_BIND_HOST = "0.0.0.0"
 DEFAULT_PORT = 8090
 DEFAULT_FRAMES_DIR = "/mnt/nvme/frames"
-
-
-def _safe_timestamp_for_filename(timestamp: str) -> str:
-    return (
-        timestamp.replace(":", "-")
-        .replace(".", "_")
-        .replace("+", "_plus_")
-        .replace("/", "_")
-    )
 
 
 def _detect_local_ip() -> str:
@@ -44,14 +35,19 @@ def _detect_local_ip() -> str:
     return "127.0.0.1"
 
 
-def _find_latest_frame_by_timestamp(frames_dir: str, timestamp: str) -> str:
-    safe_ts = _safe_timestamp_for_filename(timestamp)
-    pattern = os.path.join(frames_dir, f"{safe_ts}_*.jpg")
-    matches = glob.glob(pattern)
-    if not matches:
-        return ""
-    matches.sort(key=os.path.getmtime, reverse=True)
-    return matches[0]
+def _normalize_frame_uuid(raw_path_value: str) -> str:
+    frame_uuid = raw_path_value.strip()
+    if frame_uuid.lower().endswith(".jpg"):
+        frame_uuid = frame_uuid[:-4]
+    parsed = uuid.UUID(frame_uuid)
+    return parsed.hex
+
+
+def _resolve_frame_path(frames_dir: str, frame_uuid: str) -> str:
+    frame_path = os.path.join(frames_dir, f"{frame_uuid}.jpg")
+    if os.path.isfile(frame_path):
+        return frame_path
+    return ""
 
 
 class FrameImageServer(ThreadingHTTPServer):
@@ -97,14 +93,19 @@ class FrameImageHandler(BaseHTTPRequestHandler):
             )
             return
 
-        timestamp = urllib_parse.unquote(path.lstrip("/")).strip()
-        if not timestamp:
-            self._send_json(400, {"error": "timestamp is required in URL path"})
+        raw_frame_id = urllib_parse.unquote(path.lstrip("/")).strip()
+        if not raw_frame_id:
+            self._send_json(400, {"error": "frame_uuid is required in URL path"})
+            return
+        try:
+            frame_uuid = _normalize_frame_uuid(raw_frame_id)
+        except Exception:
+            self._send_json(400, {"error": "invalid frame_uuid", "frame_uuid": raw_frame_id})
             return
 
-        frame_path = _find_latest_frame_by_timestamp(self.app.frames_dir, timestamp)
+        frame_path = _resolve_frame_path(self.app.frames_dir, frame_uuid)
         if not frame_path:
-            self._send_json(404, {"error": "frame not found", "timestamp": timestamp})
+            self._send_json(404, {"error": "frame not found", "frame_uuid": frame_uuid})
             return
 
         try:
@@ -128,7 +129,7 @@ class FrameImageHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Standalone frame image server by timestamp.")
+    parser = argparse.ArgumentParser(description="Standalone frame image server by frame UUID.")
     parser.add_argument("--bind-host", type=str, default=DEFAULT_BIND_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--frames-dir", type=str, default=DEFAULT_FRAMES_DIR)
@@ -150,8 +151,8 @@ def main() -> None:
     print(f"Advertised   : {advertised_host}")
     print(f"Frames dir   : {args.frames_dir}")
     print("POST         : disabled")
-    print(f"Frame path   : /<timestamp>")
-    print(f"Link format  : {advertised_host}:{args.port}/<timestamp>")
+    print(f"Frame path   : /<frame_uuid>")
+    print(f"Link format  : {advertised_host}:{args.port}/<frame_uuid>")
     print("=" * 60)
     server.serve_forever()
 

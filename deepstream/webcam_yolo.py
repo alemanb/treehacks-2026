@@ -290,9 +290,7 @@ def _build_ingest_observation(
     timestamp = str(task.get("timestamp", datetime.now(timezone.utc).isoformat()))
     frame_uuid = str(task.get("frame_uuid", uuid.uuid4().hex))
     encoded_frame_uuid = urllib_parse.quote(frame_uuid, safe="")
-    frame_link = (
-        f"{state.frame_link_host}:{state.frame_link_port}/{encoded_frame_uuid}.jpg"
-    )
+    frame_link = f"{state.frame_link_host}:{state.frame_link_port}/{encoded_frame_uuid}"
     obj_label = str(task.get("label", task.get("new_label", "object"))).strip() or "object"
     raw_color = str(response.get("object_color", "")).strip().lower()
     object_color = raw_color if raw_color else "unknown"
@@ -1421,7 +1419,7 @@ def main() -> None:
     print(f"Webcam device : /dev/video{args.source}")
     print(f"Ingest URL    : {state.ingest_url}")
     print(
-        f"Frame links   : {state.frame_link_host}:{state.frame_link_port}/<frame_uuid>.jpg"
+        f"Frame links   : {state.frame_link_host}:{state.frame_link_port}/<frame_uuid>"
     )
     print(f"Video file    : {video_path}")
     print(f"Event frames  : {frames_dir}")
