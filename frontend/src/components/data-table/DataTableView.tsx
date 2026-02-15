@@ -39,22 +39,22 @@ export function DataTableView({
 
   const columns = useMemo(
     () =>
-      createColumns((timestamp: string) => {
-        if (!timestamp) return
+      createColumns((frameUuid: string, timestamp: string) => {
+        if (!frameUuid || !timestamp) return
 
         const matchingResult = results.find(
-          (result) => result.metadata.timestamp === timestamp,
+          (result) => result.metadata.frame_uuid === frameUuid,
         )
-        const rawFrameLink =
-          (
-            matchingResult?.metadata as { frame_link?: string } | undefined
-          )?.frame_link?.trim() ?? ""
-        const fallbackUrl = `http://${window.location.hostname}:8090/${encodeURIComponent(timestamp)}`
-        const resolvedUrl = rawFrameLink
-          ? rawFrameLink.startsWith("http://") || rawFrameLink.startsWith("https://")
+        const rawFrameLink = matchingResult?.metadata.frame_link?.trim() ?? ""
+        if (!rawFrameLink) {
+          throw new Error(
+            `Missing frame_link for search result frame_uuid: ${frameUuid}`,
+          )
+        }
+        const resolvedUrl =
+          rawFrameLink.startsWith("http://") || rawFrameLink.startsWith("https://")
             ? rawFrameLink
             : `http://${rawFrameLink}`
-          : fallbackUrl
 
         setSelectedTimestamp(timestamp)
         setImageLoadFailed(false)

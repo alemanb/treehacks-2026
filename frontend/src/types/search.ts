@@ -2,6 +2,8 @@ export interface Metadata {
   object: string | null
   color: string | null
   timestamp: string // ISO 8601 (e.g., "2026-02-13T14:30:05Z")
+  frame_uuid?: string | null
+  frame_link?: string | null
   motion_vector: number[] | null
   device_id: string | null
 }

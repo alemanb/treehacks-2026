@@ -5,7 +5,7 @@ import { scoreToPercentage } from "@/lib/likelihood"
 import { LikelihoodBadge } from "./LikelihoodBadge"
 
 export function createColumns(
-  onViewImage: (timestamp: string) => void,
+  onViewImage: (frameUuid: string, timestamp: string) => void,
 ): ColumnDef<SearchResult>[] {
   return [
     {
@@ -35,13 +35,14 @@ export function createColumns(
       id: "link",
       header: "Link",
       cell: ({ row }) => {
+        const frameUuid = row.original.metadata.frame_uuid
         const timestamp = row.original.metadata.timestamp
         return (
           <button
             type="button"
-            onClick={() => onViewImage(timestamp)}
+            onClick={() => onViewImage(frameUuid ?? "", timestamp)}
             className="text-blue-500 underline text-sm disabled:text-muted-foreground disabled:no-underline"
-            disabled={!timestamp}
+            disabled={!frameUuid}
           >
             View
           </button>

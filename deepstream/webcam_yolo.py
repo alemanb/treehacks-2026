@@ -16,6 +16,7 @@ import queue
 import socket
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Deque, Dict, List, Set, Tuple
 from urllib import error as urllib_error
@@ -36,6 +37,7 @@ from vlm_nano_llm import NanoLLMVLM
 INGEST_URL_DEFAULT = "https://alemanb--treehacks-vector-search-web.modal.run/ingest"
 INGEST_DEVICE_ID_DEFAULT = "jetson_super_01"
 FRAME_IMAGE_PORT_DEFAULT = 8090
+FRAME_LINK_HOST_DEFAULT = "10.19.180.12"
 
 
 def _cfg_get(cfg: configparser.ConfigParser, section: str, key: str, fallback=None):
@@ -100,15 +102,6 @@ class RuntimeState:
         self.active_snapshot: Dict[int, Dict[str, Any]] = {}
 
 
-def _safe_timestamp_for_filename(timestamp: str) -> str:
-    return (
-        timestamp.replace(":", "-")
-        .replace(".", "_")
-        .replace("+", "_plus_")
-        .replace("/", "_")
-    )
-
-
 def _detect_local_ip() -> str:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -127,16 +120,10 @@ def _detect_local_ip() -> str:
 def _save_change_frame(
     frame_bgr,
     frames_dir: str,
-    timestamp: str,
-    change_kind: str,
-    object_id: int,
-    frame_index: int,
+    frame_uuid: str,
 ) -> None:
     try:
-        safe_ts = _safe_timestamp_for_filename(timestamp)
-        filename = (
-            f"{safe_ts}_chg-{change_kind}_id-{object_id}_frame-{frame_index}.jpg"
-        )
+        filename = f"{frame_uuid}.jpg"
         cv2.imwrite(os.path.join(frames_dir, filename), frame_bgr)
     except Exception as exc:
         print(f"WARNING: failed to save change frame: {exc}")
@@ -301,8 +288,11 @@ def _build_ingest_observation(
     state: RuntimeState, kind: str, task: Dict[str, Any], response: Dict[str, Any]
 ) -> Dict[str, Any]:
     timestamp = str(task.get("timestamp", datetime.now(timezone.utc).isoformat()))
-    encoded_ts = urllib_parse.quote(timestamp, safe="")
-    frame_link = f"{state.frame_link_host}:{state.frame_link_port}/{encoded_ts}"
+    frame_uuid = str(task.get("frame_uuid", uuid.uuid4().hex))
+    encoded_frame_uuid = urllib_parse.quote(frame_uuid, safe="")
+    frame_link = (
+        f"{state.frame_link_host}:{state.frame_link_port}/{encoded_frame_uuid}.jpg"
+    )
     obj_label = str(task.get("label", task.get("new_label", "object"))).strip() or "object"
     raw_color = str(response.get("object_color", "")).strip().lower()
     object_color = raw_color if raw_color else "unknown"
@@ -341,6 +331,7 @@ def _build_ingest_observation(
         "object": obj_label,
         "color": object_color,
         "timestamp": timestamp,
+        "frame_uuid": frame_uuid,
         "frame_link": frame_link,
         "motion_vector": normalized_motion_vector,
         "device_id": state.ingest_device_id,
@@ -888,6 +879,7 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
             label = str(obj.get("canonical_label", "unknown"))
             bbox_xywh = [float(v) for v in obj.get("current_bbox_xywh", [0, 0, 0, 0])]
             confidence = float(obj.get("confidence", 0.0))
+            frame_uuid = uuid.uuid4().hex
 
             best_old_id = None
             best_iou = 0.0
@@ -924,6 +916,7 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
                         "old_id": best_old_id,
                         "frame_index": frame_index,
                         "timestamp": timestamp,
+                        "frame_uuid": frame_uuid,
                         "new_label": label,
                         "old_label": old_label,
                         "bbox_xywh": bbox_xywh,
@@ -955,10 +948,7 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
                 _save_change_frame(
                     frame_bgr=frame_bgr,
                     frames_dir=state.frames_dir,
-                    timestamp=timestamp,
-                    change_kind="start",
-                    object_id=object_id,
-                    frame_index=frame_index,
+                    frame_uuid=frame_uuid,
                 )
 
         for object_id in common_ids:
@@ -986,6 +976,7 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
             label = str(obj.get("canonical_label", "unknown"))
             confidence = float(obj.get("confidence", 0.0))
             if before_bgr is not None and frame_bgr is not None:
+                frame_uuid = uuid.uuid4().hex
                 _enqueue_vlm_task(
                     state,
                     {
@@ -995,6 +986,7 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
                         "bbox_xywh": curr_bbox,
                         "frame_index": frame_index,
                         "timestamp": timestamp,
+                        "frame_uuid": frame_uuid,
                         "detection_confidence": confidence,
                         "motion_vector": motion_vector,
                         "before_bgr": before_bgr.copy(),
@@ -1005,10 +997,7 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
                     _save_change_frame(
                         frame_bgr=frame_bgr,
                         frames_dir=state.frames_dir,
-                        timestamp=timestamp,
-                        change_kind="move",
-                        object_id=object_id,
-                        frame_index=frame_index,
+                        frame_uuid=frame_uuid,
                     )
                 _append_bbox_history(
                     state=state,
@@ -1030,6 +1019,7 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
             state.disappeared_object_ids.add(object_id)
             filtered_obj = _ensure_filtered_object(state, object_id, prev_label)
             if before_bgr is not None and frame_bgr is not None:
+                frame_uuid = uuid.uuid4().hex
                 _enqueue_vlm_task(
                     state,
                     {
@@ -1039,6 +1029,7 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
                         "bbox_xywh": prev_bbox,
                         "frame_index": frame_index,
                         "timestamp": timestamp,
+                        "frame_uuid": frame_uuid,
                         "motion_vector": [0.0, 0.0],
                         "before_bgr": before_bgr.copy(),
                         "current_bgr": frame_bgr.copy(),
@@ -1047,10 +1038,7 @@ def pgie_src_pad_buffer_probe(pad, info, state: RuntimeState):
                 _save_change_frame(
                     frame_bgr=frame_bgr,
                     frames_dir=state.frames_dir,
-                    timestamp=timestamp,
-                    change_kind="end",
-                    object_id=object_id,
-                    frame_index=frame_index,
+                    frame_uuid=frame_uuid,
                 )
             state.archived_objects[object_id] = dict(filtered_obj)
             state.filtered_objects.pop(object_id, None)
@@ -1163,8 +1151,11 @@ def main() -> None:
     parser.add_argument(
         "--frame-link-host",
         type=str,
-        default="",
-        help="Host/IP for frame links in ingest metadata (default: auto-detect local LAN IP).",
+        default=FRAME_LINK_HOST_DEFAULT,
+        help=(
+            "Host/IP for frame links in ingest metadata "
+            f"(default: {FRAME_LINK_HOST_DEFAULT})."
+        ),
     )
     parser.add_argument(
         "--frame-link-port",
@@ -1204,7 +1195,7 @@ def main() -> None:
         motion_threshold=args.motion_threshold,
         max_missing_frames=args.max_missing,
     )
-    frame_link_host = args.frame_link_host.strip() or _detect_local_ip()
+    frame_link_host = args.frame_link_host.strip() or FRAME_LINK_HOST_DEFAULT
     vlm_client = NanoLLMVLM(
         model=args.vlm_model,
         base_url=args.vlm_base_url,
@@ -1430,7 +1421,7 @@ def main() -> None:
     print(f"Webcam device : /dev/video{args.source}")
     print(f"Ingest URL    : {state.ingest_url}")
     print(
-        f"Frame links   : {state.frame_link_host}:{state.frame_link_port}/<timestamp>"
+        f"Frame links   : {state.frame_link_host}:{state.frame_link_port}/<frame_uuid>.jpg"
     )
     print(f"Video file    : {video_path}")
     print(f"Event frames  : {frames_dir}")
