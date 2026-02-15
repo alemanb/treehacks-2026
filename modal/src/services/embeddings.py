@@ -2,7 +2,7 @@ import os
 
 import requests
 
-from config import JINA_API_URL, JINA_MODEL
+from src.config import JINA_API_URL, JINA_MODEL
 
 
 def get_embeddings(texts: list[str]) -> list[list[float]]:

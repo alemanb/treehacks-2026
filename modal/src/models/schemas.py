@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class Metadata(BaseModel):
@@ -37,6 +37,22 @@ class HealthResponse(BaseModel):
 # Search API models
 class SearchRequest(BaseModel):
     query: str
+    page: int = 1
+    page_size: int = 10
+
+    @field_validator('page')
+    @classmethod
+    def validate_page(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError('page must be >= 1')
+        return v
+
+    @field_validator('page_size')
+    @classmethod
+    def validate_page_size(cls, v: int) -> int:
+        if not (1 <= v <= 100):
+            raise ValueError('page_size must be between 1 and 100')
+        return v
 
 
 class SearchResult(BaseModel):
@@ -46,6 +62,15 @@ class SearchResult(BaseModel):
     metadata: Metadata
 
 
+class PaginationMetadata(BaseModel):
+    """Pagination metadata for search results."""
+    page: int
+    page_size: int
+    total_results: int
+    total_pages: int
+
+
 class SearchResponse(BaseModel):
     query: str
     results: list[SearchResult]
+    pagination: PaginationMetadata

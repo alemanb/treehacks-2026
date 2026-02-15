@@ -1,0 +1,8 @@
+# Ignore all JSON files in data directory
+*.json
+
+# But keep this .gitignore
+!.gitignore
+
+# Optionally keep a README
+!README.md
