@@ -72,3 +72,37 @@ def bulk_index_documents(
     success, errors = bulk(client, actions, raise_on_error=False)
     error_count = len(errors) if isinstance(errors, list) else errors
     return success, error_count
+
+
+def search_similar(
+    client: Elasticsearch,
+    query_vector: list[float],
+    k: int = 3,
+    num_candidates: int = 100,
+) -> list[dict]:
+    """Perform kNN vector similarity search.
+
+    Args:
+        client: Elasticsearch client instance
+        query_vector: 1024-dim embedding of the search query
+        k: Number of top results to return (default 3)
+        num_candidates: Number of candidates to consider (default 100, should be 10-20x k)
+
+    Returns:
+        List of dicts with keys: _id, _score, _source (containing content and metadata)
+
+    Context7 Reference:
+        /elastic/elasticsearch-py — kNN search via client.search(knn={...})
+    """
+    response = client.search(
+        index=ES_INDEX,
+        knn={
+            "field": "embedding",
+            "query_vector": query_vector,
+            "k": k,
+            "num_candidates": num_candidates,
+        },
+        _source=["content", "metadata"],  # Exclude embedding from response (large & not needed)
+    )
+
+    return response["hits"]["hits"]

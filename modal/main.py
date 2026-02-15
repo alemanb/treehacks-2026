@@ -20,18 +20,42 @@ app = modal.App("treehacks-vector-search", image=image)
 @modal.asgi_app()
 def web():
     from fastapi import FastAPI, HTTPException
+    from fastapi.middleware.cors import CORSMiddleware
 
-    from embeddings import get_embeddings
+    from embeddings import get_embeddings, get_query_embedding
     from models import (
         BatchIngestRequest,
         BatchIngestResponse,
         HealthResponse,
         IngestRequest,
         IngestResponse,
+        Metadata,
+        SearchRequest,
+        SearchResponse,
+        SearchResult,
     )
-    from vectordb import bulk_index_documents, ensure_index, get_client, index_document
+    from vectordb import (
+        bulk_index_documents,
+        ensure_index,
+        get_client,
+        index_document,
+        search_similar,
+    )
 
     web_app = FastAPI(title="TreeHacks Vector Search")
+
+    # Add CORS middleware to allow frontend requests
+    web_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:5173",  # Vite dev server
+            "http://localhost:5174",  # Alternative Vite port
+            "http://localhost:3000",  # Common React dev server port
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],  # Allow all HTTP methods (GET, POST, etc.)
+        allow_headers=["*"],  # Allow all headers
+    )
 
     # Lazy ES init — avoids blocking app startup if ES is slow/unreachable
     _es_client = None
@@ -83,5 +107,48 @@ def web():
         except Exception as e:
             es_status = f"error: {e}"
         return HealthResponse(status="ok", elasticsearch=es_status, jina="reachable")
+
+    @web_app.post("/search", response_model=SearchResponse)
+    async def search(req: SearchRequest):
+        """Vector similarity search endpoint.
+
+        Embeds the query using Jina (retrieval.query task), performs kNN search
+        in Elasticsearch, and returns the top 3 most similar observations.
+
+        Request:
+            {"query": "blue book stolen from library"}
+
+        Response:
+            {"query": "...", "results": [{id, content, score, metadata}, ...]}
+        """
+        # 1. Validate query
+        if not req.query.strip():
+            raise HTTPException(400, "query must be a non-empty string")
+
+        # 2. Embed query using retrieval.query task
+        try:
+            query_embedding = get_query_embedding(req.query)
+        except Exception as e:
+            raise HTTPException(502, f"Embedding service error: {str(e)}")
+
+        # 3. Perform kNN search in Elasticsearch
+        es = _get_es()
+        try:
+            hits = search_similar(es, query_embedding, k=3, num_candidates=100)
+        except Exception as e:
+            raise HTTPException(503, f"Search service error: {str(e)}")
+
+        # 4. Format response
+        results = [
+            SearchResult(
+                id=hit["_id"],
+                content=hit["_source"]["content"],
+                score=hit["_score"],
+                metadata=Metadata(**hit["_source"]["metadata"]),
+            )
+            for hit in hits
+        ]
+
+        return SearchResponse(query=req.query, results=results)
 
     return web_app

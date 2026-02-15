@@ -32,3 +32,20 @@ class HealthResponse(BaseModel):
     status: str
     elasticsearch: str
     jina: str
+
+
+# Search API models
+class SearchRequest(BaseModel):
+    query: str
+
+
+class SearchResult(BaseModel):
+    id: str
+    content: str
+    score: float
+    metadata: Metadata
+
+
+class SearchResponse(BaseModel):
+    query: str
+    results: list[SearchResult]
