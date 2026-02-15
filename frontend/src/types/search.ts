@@ -13,7 +13,15 @@ export interface SearchResult {
   metadata: Metadata
 }
 
+export interface PaginationMetadata {
+  page: number
+  page_size: number
+  total_results: number
+  total_pages: number
+}
+
 export interface SearchResponse {
   query: string
   results: SearchResult[]
+  pagination: PaginationMetadata
 }

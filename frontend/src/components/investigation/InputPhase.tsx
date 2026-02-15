@@ -2,17 +2,8 @@ import { useState } from "react"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 
-const MOTION_KEYWORDS = [
-  "last movement",
-  "last seen moving",
-  "where did it go",
-  "motion",
-  "direction",
-  "trajectory",
-]
-
 interface InputPhaseProps {
-  onSubmit: (query: string, includeMotion: boolean) => void
+  onSubmit: (query: string) => void
 }
 
 export function InputPhase({ onSubmit }: InputPhaseProps) {
@@ -22,9 +13,7 @@ export function InputPhase({ onSubmit }: InputPhaseProps) {
     const trimmed = query.trim()
     if (!trimmed) return
 
-    const lower = trimmed.toLowerCase()
-    const includeMotion = MOTION_KEYWORDS.some((kw) => lower.includes(kw))
-    onSubmit(trimmed, includeMotion)
+    onSubmit(trimmed)
   }
 
   return (
