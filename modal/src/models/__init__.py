@@ -1,5 +1,12 @@
 """Pydantic models for API requests and responses."""
 
+from .agent_schemas import (
+    IntelligentSearchRequest,
+    MatchingResponse,
+    MatchingResult,
+    QueryExpansion,
+    SearchConditions,
+)
 from .schemas import (
     BatchIngestRequest,
     BatchIngestResponse,
@@ -14,6 +21,7 @@ from .schemas import (
 )
 
 __all__ = [
+    # Existing schemas
     "BatchIngestRequest",
     "BatchIngestResponse",
     "HealthResponse",
@@ -24,4 +32,10 @@ __all__ = [
     "SearchRequest",
     "SearchResponse",
     "SearchResult",
+    # New agent schemas
+    "IntelligentSearchRequest",
+    "MatchingResponse",
+    "MatchingResult",
+    "QueryExpansion",
+    "SearchConditions",
 ]

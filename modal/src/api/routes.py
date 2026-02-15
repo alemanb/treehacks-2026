@@ -1,5 +1,7 @@
 """FastAPI application with all API routes for vector search."""
 
+import json
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -9,6 +11,8 @@ from src.models import (
     HealthResponse,
     IngestRequest,
     IngestResponse,
+    IntelligentSearchRequest,
+    MatchingResponse,
     Metadata,
     PaginationMetadata,
     SearchRequest,
@@ -24,6 +28,7 @@ from src.services import (
     index_document,
     search_similar,
 )
+from src.workflows import intelligent_rag_workflow
 
 
 def create_app() -> FastAPI:
@@ -171,5 +176,79 @@ def create_app() -> FastAPI:
                 total_pages=total_pages
             )
         )
+
+    @web_app.post("/search/intelligent", response_model=MatchingResponse)
+    async def intelligent_search(req: IntelligentSearchRequest):
+        """
+        Intelligent vector search using multi-agent workflow.
+
+        This endpoint uses a multi-agent system to:
+        1. Expand the query with related terms (Query Expansion Agent)
+        2. Determine temporal and confidence conditions (Condition Agent)
+        3. Execute smart search with likelihood scoring (Matching Agent)
+
+        The workflow provides better results for ambiguous queries and
+        automatically handles temporal filtering.
+
+        Request:
+            {
+                "query": "blue thing taken yesterday",
+                "max_results": 10
+            }
+
+        Response:
+            {
+                "query": "...",
+                "expanded_query": "...",
+                "results": [{...}],
+                "total_count": 15,
+                "conditions_applied": {...}
+            }
+        """
+        # Validate query
+        if not req.query.strip():
+            raise HTTPException(400, "query must be a non-empty string")
+
+        try:
+            # Run the multi-agent workflow
+            workflow_response = intelligent_rag_workflow.run(
+                input=req.query, additional_data={"max_results": req.max_results}
+            )
+
+            # Parse the final output from matching agent
+            try:
+                matching_response = MatchingResponse.model_validate_json(
+                    workflow_response.content
+                )
+            except Exception as parse_error:
+                # If parsing fails, try to extract error information for better debugging
+                try:
+                    partial_data = json.loads(workflow_response.content) if isinstance(workflow_response.content, str) else workflow_response.content
+                    if isinstance(partial_data, dict) and "error" in partial_data:
+                        error_msg = partial_data.get("error", "Unknown error")
+                        raise HTTPException(
+                            500, f"Multi-agent workflow error: {error_msg}"
+                        )
+                except json.JSONDecodeError:
+                    pass  # Not JSON, continue with original error
+
+                # If we get here, it's a parsing/validation error
+                raise HTTPException(
+                    500, f"Failed to parse workflow response: {str(parse_error)}"
+                )
+
+            return matching_response
+
+        except HTTPException:
+            # Re-raise HTTP exceptions
+            raise
+        except Exception as e:
+            # Log the error for debugging
+            import traceback
+
+            traceback.print_exc()
+            raise HTTPException(
+                500, f"Intelligent search workflow failed: {str(e)}"
+            )
 
     return web_app
